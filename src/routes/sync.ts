@@ -10,9 +10,9 @@ import { FastifyPluginAsync } from 'fastify'
 
 // Shape of the graph payload sent from the Flutter app
 interface GraphPayload {
-  books:       unknown[]
-  notes:       unknown[]
-  links:       unknown[]
+  books: unknown[]
+  notes: unknown[]
+  links: unknown[]
   exported_at: string
 }
 
@@ -25,9 +25,9 @@ const syncRoutes: FastifyPluginAsync = async (fastify) => {
         type: 'object',
         required: ['books', 'notes', 'links', 'exported_at'],
         properties: {
-          books:       { type: 'array' },
-          notes:       { type: 'array' },
-          links:       { type: 'array' },
+          books: { type: 'array' },
+          notes: { type: 'array' },
+          links: { type: 'array' },
           exported_at: { type: 'string' },
         },
       },
@@ -58,7 +58,7 @@ const syncRoutes: FastifyPluginAsync = async (fastify) => {
 
     return reply.code(201).send({
       snapshot_id: rows[0].id,
-      saved_at:    rows[0].created_at,
+      saved_at: rows[0].created_at,
     })
   })
 
@@ -77,8 +77,8 @@ const syncRoutes: FastifyPluginAsync = async (fastify) => {
 
     return {
       snapshot_id: rows[0].id,
-      saved_at:    rows[0].created_at,
-      graph:       rows[0].payload,
+      saved_at: rows[0].created_at,
+      graph: rows[0].payload,
     }
   })
 

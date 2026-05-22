@@ -4,10 +4,14 @@
   "description": "Synapse API — AI suggestions + cloud backup for a local-first knowledge graph",
   "main": "dist/server.js",
   "scripts": {
-    "dev":        "tsx watch src/server.ts",
-    "build":      "tsc",
-    "start":      "node dist/server.js",
-    "db:migrate": "psql $DATABASE_URL -f db/schema.sql"
+    "dev":         "tsx watch src/server.ts",
+    "build":       "tsc",
+    "start":       "node dist/server.js",
+    "db:up":       "docker compose up -d postgres",
+    "db:down":     "docker compose down",
+    "db:migrate":  "docker compose exec -T postgres psql -U synapse -d synapse -f - < db/schema.sql",
+    "setup:local": "npm run db:up && sleep 3 && npm run db:migrate",
+    "test:local":  "bash scripts/smoke-test.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.24.0",
