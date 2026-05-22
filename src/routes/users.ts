@@ -1,12 +1,8 @@
 import { FastifyPluginAsync } from 'fastify'
 
 /**
- * POST /v1/users/sync
- * Called by the Flutter app right after Firebase sign-in.
- * Upserts the user into our PostgreSQL users table.
- *
- * GET /v1/users/me
- * Returns the current user's profile.
+ * Called once right after the user signs in with Firebase on the Flutter app.
+ * Upserts the user into our DB so the other tables can reference them.
  */
 const userRoutes: FastifyPluginAsync = async (fastify) => {
 
@@ -27,15 +23,6 @@ const userRoutes: FastifyPluginAsync = async (fastify) => {
     return reply.code(201).send(rows[0])
   })
 
-  // GET /v1/users/me
-  fastify.get('/me', async (request, reply) => {
-    const { rows } = await fastify.pg.query(
-      `SELECT * FROM users WHERE id = $1`,
-      [request.user.uid],
-    )
-    if (!rows[0]) return reply.notFound('User not found — call /sync first')
-    return rows[0]
-  })
 }
 
 export default userRoutes
