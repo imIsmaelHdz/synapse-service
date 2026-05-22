@@ -1,0 +1,28 @@
+{
+  "name": "synapse-service",
+  "version": "1.0.0",
+  "description": "Synapse API — Knowledge graph backend",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev":   "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "db:migrate": "psql $DATABASE_URL -f db/schema.sql"
+  },
+  "dependencies": {
+    "@fastify/cors":      "^8.5.0",
+    "@fastify/helmet":    "^11.1.1",
+    "@fastify/postgres":  "^5.2.2",
+    "@fastify/sensible":  "^5.5.0",
+    "fastify":            "^4.26.0",
+    "fastify-plugin":     "^4.5.1",
+    "firebase-admin":     "^11.11.0",
+    "dotenv":             "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/node":  "^20.11.0",
+    "pino-pretty":  "^10.3.1",
+    "tsx":          "^4.7.0",
+    "typescript":   "^5.3.3"
+  }
+}
