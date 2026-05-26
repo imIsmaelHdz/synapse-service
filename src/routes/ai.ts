@@ -239,8 +239,10 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
 
       let raw: string
       try {
+        // gemini-2.0-flash: no thinking tokens, fast, more than capable
+        // for structured recommendation generation.
         const model = genAI.getGenerativeModel({
-          model: 'gemini-2.5-flash',
+          model: 'gemini-2.0-flash',
           generationConfig: {
             maxOutputTokens: 1024,
           },
