@@ -149,6 +149,14 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
       })
 
       const result = await model.generateContent(buildPrompt(notes))
+
+      const candidate = result.response.candidates?.[0]
+      const finishReason = candidate?.finishReason ?? 'STOP'
+      if (finishReason !== 'STOP' && finishReason !== 'MAX_TOKENS') {
+        fastify.log.warn({ finishReason }, 'Gemini /suggest unexpected finishReason')
+        return reply.internalServerError('AI service unavailable — try again shortly')
+      }
+
       raw = result.response.text()
 
     } catch (err) {
@@ -210,12 +218,22 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
           model: 'gemini-2.5-flash',
           generationConfig: {
             responseMimeType: 'application/json',
-            maxOutputTokens: 1024,
+            maxOutputTokens: 2048,
           },
         })
         const result = await model.generateContent(
           buildDiscoverPrompt(title, creator, type),
         )
+
+        // finishReason can be MAX_TOKENS when the response hits the cap;
+        // text() will still return what was generated — attempt to use it.
+        const candidate = result.response.candidates?.[0]
+        const finishReason = candidate?.finishReason ?? 'STOP'
+        if (finishReason !== 'STOP' && finishReason !== 'MAX_TOKENS') {
+          fastify.log.warn({ finishReason }, 'Gemini /discover unexpected finishReason')
+          return reply.internalServerError('AI service unavailable — try again shortly')
+        }
+
         raw = result.response.text()
       } catch (err) {
         fastify.log.error(err, 'Gemini API error in /discover')
