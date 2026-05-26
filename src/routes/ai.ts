@@ -1,5 +1,6 @@
 import { FastifyPluginAsync } from 'fastify'
 import { GoogleGenerativeAI } from '@google/generative-ai'
+import { loadPrompt } from '../lib/prompt-loader'
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '')
 
@@ -20,39 +21,13 @@ interface Suggestion {
 const MAX_NOTES   = 60
 const MAX_CONTENT = 400   // chars per note
 
-const SYSTEM_PROMPT = `You are a knowledge connection engine for Synapse, a personal knowledge graph app.
-
-Given a list of the user's personal notes, find meaningful semantic connections between them — the kind of non-obvious links that spark new insight. Think like a brilliant friend who has read everything across every field, not a keyword matcher.
-
-Guidelines:
-- Suggest EXACTLY 3 connections — no more, no fewer
-- Prioritise surprising cross-domain connections over obvious same-topic links
-- Every suggestion must include a short "Because:" explanation (1-2 sentences) grounded in the actual note content — no generic filler
-- Write the "reason" field in the same language the notes are written in (detect from the note titles and content)
-- Return only valid JSON, no extra text`
-
 function buildPrompt(notes: Note[]): string {
   const formatted = notes
     .slice(0, MAX_NOTES)
     .map((n) => `[${n.id}] ${n.title}\n${n.content.slice(0, MAX_CONTENT)}`)
     .join('\n\n---\n\n')
 
-  return `${SYSTEM_PROMPT}
-
-Here are the user's notes:
-
-${formatted}
-
-Return ONLY this JSON structure, no markdown, no code fences, no extra text:
-{
-  "suggestions": [
-    {
-      "source_note_id": "the-exact-note-id",
-      "target_note_id": "the-exact-note-id",
-      "reason": "Because..."
-    }
-  ]
-}`
+  return loadPrompt('suggest', { notes: formatted })
 }
 
 // ── /discover types ───────────────────────────────────────────────────────────
@@ -107,62 +82,15 @@ function buildDiscoverSinglePrompt(
       existing.map((e) => `- "${e.title}"${e.creator ? ` by ${e.creator}` : ''} (${e.type})`).join('\n')
     : ''
 
-  return `You are a deep-media recommendation engine for Synapse, a personal knowledge graph app.
-
-Your task: recommend ONE ${TYPE_LABELS[returnType]} that shares the *soul* of the source — its themes, emotional tone, cultural DNA, and narrative texture. Never match on surface keywords or proper nouns.
-
-Before choosing, silently analyse the source across these dimensions:
-• Real genre / subgenre (e.g. "shonen anime", "Roman epic", "Stoic philosophy", "psychological thriller")
-• Core themes (e.g. "grief driving duty", "corruption of power vs personal honour", "coming-of-age through loss")
-• Emotional tone (e.g. "intense and bittersweet", "epic and tragic", "melancholic and introspective")
-• Cultural / historical context (e.g. "Taisho-era Japan, samurai ethos, Japanese folklore")
-• Narrative structure (e.g. "hero's journey fuelled by revenge", "fall-from-grace arc")
-
-Recommend based on that analysis — NEVER on shared words in the title.
-
-❌ WRONG — "The Exorcist" for "Demon Slayer: Kimetsu no Yaiba" (matched the word "demon")
-✅ RIGHT  — "Kagurabachi" for "Demon Slayer" (both: shonen manga, samurai-era Japan, protagonist driven by grief over a slain parent, intense visual artistry, duty vs personal loss)
-
-❌ WRONG — "Gladiator" → "300" (same genre, obvious pick)
-✅ RIGHT  — "Gladiator" → "Meditations" by Marcus Aurelius (both: Roman Stoic worldview, honour and duty under tyranny, a man stripped of everything who finds meaning through integrity)
-
-Rules:
-- Must be a REAL, published / released, findable ${TYPE_LABELS[returnType]}
-- The "Because:" must cite specific shared themes or emotional DNA — never generic phrases like "explores similar themes" or "fans of X will enjoy"
-- Write in the same language as the source title
-- Return ONLY valid JSON, no markdown, no extra text
-
-Source: ${source}${exclusions}
-
-Return ONLY: {"title": "...", "creator": "${CREATOR_LABELS[returnType]}", "reason": "Because..."}`
+  return loadPrompt('discover-single', {
+    returnTypeLabel: TYPE_LABELS[returnType],
+    source,
+    exclusions,
+    creatorLabel: CREATOR_LABELS[returnType],
+  })
 }
 
 // ── Batch prompt (legacy — kept for backwards compatibility) ──────────────────
-
-const DISCOVER_SYSTEM_PROMPT = `You are a deep-media recommendation engine for Synapse, a personal knowledge graph app.
-
-Given a source from the user's library, recommend three items — one book, one movie, one podcast/video — that share the *soul* of the source: its themes, emotional tone, cultural context, and narrative DNA. Never match on surface keywords or proper nouns.
-
-Before choosing, silently analyse the source:
-• Real genre / subgenre (e.g. "shonen anime", "Roman epic", "Stoic philosophy")
-• Core themes (e.g. "grief driving duty", "corruption of power vs personal honour")
-• Emotional tone (e.g. "intense and bittersweet", "epic and tragic")
-• Cultural / historical context (e.g. "Taisho-era Japan, samurai ethos")
-• Narrative structure (e.g. "hero's journey fuelled by revenge")
-
-Recommend based on that analysis — NEVER on shared words in the title.
-
-❌ WRONG — "The Exorcist" for "Demon Slayer" (matched the word "demon")
-✅ RIGHT  — "Kagurabachi" for "Demon Slayer" (both: shonen, samurai-era Japan, protagonist driven by grief over a slain parent)
-
-❌ WRONG — "Gladiator" → "300" (obvious same-genre pick)
-✅ RIGHT  — "Gladiator" → "Meditations" by Marcus Aurelius (Roman Stoic worldview, honour under tyranny, integrity through loss)
-
-Rules:
-- All three items must be REAL, published / released, findable
-- Each "Because:" must cite specific shared themes or emotional DNA — no generic filler
-- Use the same language as the source
-- Return ONLY valid JSON, no markdown, no code fences, no extra text`
 
 function buildDiscoverPrompt(title: string, creator: string, type: string, existing: ExistingItem[] = []): string {
   const source = creator
@@ -174,16 +102,7 @@ function buildDiscoverPrompt(title: string, creator: string, type: string, exist
       existing.map((e) => `- "${e.title}"${e.creator ? ` by ${e.creator}` : ''} (${e.type})`).join('\n')
     : ''
 
-  return `${DISCOVER_SYSTEM_PROMPT}
-
-The user's source item: ${source}${exclusions}
-
-Return ONLY this JSON structure:
-{
-  "book":  { "title": "...", "creator": "Author name",  "reason": "Because..." },
-  "movie": { "title": "...", "creator": "Director name", "reason": "Because..." },
-  "serie": { "title": "...", "creator": "Channel or host name", "reason": "Because..." }
-}`
+  return loadPrompt('discover-batch', { source, exclusions })
 }
 
 // ── Route plugin ──────────────────────────────────────────────────────────────
