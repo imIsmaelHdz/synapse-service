@@ -1,7 +1,9 @@
 import { FastifyPluginAsync } from 'fastify'
-import Anthropic             from '@anthropic-ai/sdk'
+import { GoogleGenerativeAI } from '@google/generative-ai'
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '')
+
+// ── /suggest types ────────────────────────────────────────────────────────────
 
 interface Note {
   id:      string
@@ -15,7 +17,6 @@ interface Suggestion {
   reason:         string
 }
 
-// Trim note content so we don't blow the context window
 const MAX_NOTES   = 60
 const MAX_CONTENT = 400   // chars per note
 
@@ -24,39 +25,91 @@ const SYSTEM_PROMPT = `You are a knowledge connection engine for Synapse, a pers
 Given a list of the user's personal notes, find meaningful semantic connections between them — the kind of non-obvious links that spark new insight. Think like a brilliant friend who has read everything across every field, not a keyword matcher.
 
 Guidelines:
+- Suggest EXACTLY 3 connections — no more, no fewer
 - Prioritise surprising cross-domain connections over obvious same-topic links
 - Every suggestion must include a short "Because:" explanation (1-2 sentences) grounded in the actual note content — no generic filler
-- Aim for quality over quantity: 3 great suggestions beat 5 weak ones
-- Maximum 5 suggestions
+- Write the "reason" field in the same language the notes are written in (detect from the note titles and content)
 - Return only valid JSON, no extra text`
 
-function buildUserPrompt (notes: Note[]): string {
+function buildPrompt(notes: Note[]): string {
   const formatted = notes
     .slice(0, MAX_NOTES)
     .map((n) => `[${n.id}] ${n.title}\n${n.content.slice(0, MAX_CONTENT)}`)
     .join('\n\n---\n\n')
 
-  return `Here are the user's notes:\n\n${formatted}\n\nReturn JSON in this exact format:
+  return `${SYSTEM_PROMPT}
+
+Here are the user's notes:
+
+${formatted}
+
+Return ONLY this JSON structure, no markdown, no code fences, no extra text:
 {
   "suggestions": [
     {
-      "source_note_id": "uuid",
-      "target_note_id": "uuid",
+      "source_note_id": "the-exact-note-id",
+      "target_note_id": "the-exact-note-id",
       "reason": "Because..."
     }
   ]
 }`
 }
 
-/**
- * POST /v1/ai/suggest
- *
- * Flutter sends its local notes array.
- * Claude finds non-obvious semantic connections.
- * Returns suggested links with explanations — the user accepts or dismisses each.
- */
+// ── /discover types ───────────────────────────────────────────────────────────
+
+interface DiscoverItem {
+  title:   string
+  creator: string
+  reason:  string
+}
+
+interface DiscoverResult {
+  book:  DiscoverItem
+  movie: DiscoverItem
+  serie: DiscoverItem
+}
+
+const DISCOVER_SYSTEM_PROMPT = `You are a cross-media recommendation engine for Synapse, a personal knowledge graph app.
+
+Given a source the user has in their library (a book, movie, series, personal note, or topic), suggest three related items they might want to explore next:
+1. A book  — real, published, findable
+2. A movie — real, released, findable
+3. A podcast episode or YouTube video — real, findable online
+
+Rules:
+- Prefer surprising cross-domain connections over obvious same-genre picks
+- Each item must have a short "Because:" explanation (1–2 sentences) that connects it directly to the input source's themes or ideas
+- Use the same language the input is in (detect from the title and creator)
+- Return ONLY valid JSON, no markdown, no code fences, no extra text`
+
+function buildDiscoverPrompt(title: string, creator: string, type: string): string {
+  const source = creator
+    ? `"${title}" by ${creator} (${type})`
+    : `"${title}" (${type})`
+
+  return `${DISCOVER_SYSTEM_PROMPT}
+
+The user's source item: ${source}
+
+Return ONLY this JSON structure:
+{
+  "book":  { "title": "...", "creator": "Author name",  "reason": "Because..." },
+  "movie": { "title": "...", "creator": "Director name", "reason": "Because..." },
+  "serie": { "title": "...", "creator": "Channel or host name", "reason": "Because..." }
+}`
+}
+
+// ── Route plugin ──────────────────────────────────────────────────────────────
+
 const aiRoutes: FastifyPluginAsync = async (fastify) => {
 
+  /**
+   * POST /v1/ai/suggest
+   *
+   * Flutter sends its local notes array.
+   * Gemini finds non-obvious semantic connections.
+   * Returns suggested links with explanations — the user accepts or dismisses each.
+   */
   fastify.post<{ Body: { notes: Note[] } }>('/suggest', {
     schema: {
       body: {
@@ -83,47 +136,121 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
   }, async (request, reply) => {
 
     const { notes } = request.body
-
-    // Collect note IDs for validation
     const noteIds = new Set(notes.map((n) => n.id))
 
     let raw: string
     try {
-      const message = await client.messages.create({
-        model:      'claude-opus-4-5',
-        max_tokens: 1024,
-        system:     SYSTEM_PROMPT,
-        messages:   [{ role: 'user', content: buildUserPrompt(notes) }],
+      const model = genAI.getGenerativeModel({
+        model: 'gemini-2.5-flash',
+        generationConfig: {
+          responseMimeType: 'application/json',
+          maxOutputTokens: 4096,
+        },
       })
 
-      raw = message.content
-        .filter((b) => b.type === 'text')
-        .map((b) => (b as { type: 'text'; text: string }).text)
-        .join('')
+      const result = await model.generateContent(buildPrompt(notes))
+      raw = result.response.text()
 
     } catch (err) {
-      fastify.log.error(err, 'Claude API error')
+      fastify.log.error(err, 'Gemini API error')
       return reply.internalServerError('AI service unavailable — try again shortly')
     }
 
-    // Parse Claude's JSON response
     let suggestions: Suggestion[] = []
     try {
-      const parsed = JSON.parse(raw)
-      suggestions = (parsed.suggestions ?? []).filter(
-        (s: Suggestion) =>
-          noteIds.has(s.source_note_id) &&
-          noteIds.has(s.target_note_id) &&
-          s.source_note_id !== s.target_note_id &&
-          typeof s.reason === 'string',
-      )
-    } catch {
-      fastify.log.warn({ raw }, 'Could not parse Claude response as JSON')
+      const start = raw.indexOf('{')
+      const end   = raw.lastIndexOf('}')
+      if (start === -1 || end === -1) throw new Error('No JSON object found')
+      const parsed = JSON.parse(raw.slice(start, end + 1))
+      suggestions = (parsed.suggestions ?? [])
+        .filter(
+          (s: Suggestion) =>
+            noteIds.has(s.source_note_id) &&
+            noteIds.has(s.target_note_id) &&
+            s.source_note_id !== s.target_note_id &&
+            typeof s.reason === 'string',
+        )
+        .slice(0, 3)
+    } catch (parseErr) {
+      fastify.log.warn({ raw, parseErr: String(parseErr) }, 'Could not parse Gemini response as JSON')
       return reply.internalServerError('Unexpected AI response format')
     }
 
     return { suggestions }
   })
+
+  /**
+   * POST /v1/ai/discover
+   *
+   * Flutter sends a source item from the user's library.
+   * Gemini returns one book, one movie, and one podcast/video recommendation
+   * with a "Because:" explanation for each.
+   */
+  fastify.post<{ Body: { title: string; creator: string; type: string } }>(
+    '/discover',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          required: ['title', 'type'],
+          properties: {
+            title:   { type: 'string', minLength: 1, maxLength: 300 },
+            creator: { type: 'string', maxLength: 200, default: '' },
+            type:    { type: 'string', maxLength: 50 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { title, creator = '', type } = request.body
+
+      let raw: string
+      try {
+        const model = genAI.getGenerativeModel({
+          model: 'gemini-2.5-flash',
+          generationConfig: {
+            responseMimeType: 'application/json',
+            maxOutputTokens: 1024,
+          },
+        })
+        const result = await model.generateContent(
+          buildDiscoverPrompt(title, creator, type),
+        )
+        raw = result.response.text()
+      } catch (err) {
+        fastify.log.error(err, 'Gemini API error in /discover')
+        return reply.internalServerError('AI service unavailable — try again shortly')
+      }
+
+      let discoverResult: DiscoverResult
+      try {
+        const start = raw.indexOf('{')
+        const end   = raw.lastIndexOf('}')
+        if (start === -1 || end === -1) throw new Error('No JSON object found')
+        const parsed = JSON.parse(raw.slice(start, end + 1))
+
+        const sanitise = (obj: unknown): DiscoverItem => {
+          const o = (obj ?? {}) as Record<string, unknown>
+          return {
+            title:   String(o['title']   ?? ''),
+            creator: String(o['creator'] ?? ''),
+            reason:  String(o['reason']  ?? ''),
+          }
+        }
+
+        discoverResult = {
+          book:  sanitise(parsed['book']),
+          movie: sanitise(parsed['movie']),
+          serie: sanitise(parsed['serie']),
+        }
+      } catch (parseErr) {
+        fastify.log.warn({ raw, parseErr: String(parseErr) }, 'Could not parse /discover response')
+        return reply.internalServerError('Unexpected AI response format')
+      }
+
+      return discoverResult
+    },
+  )
 
 }
 
