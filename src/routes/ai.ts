@@ -217,7 +217,6 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
         const model = genAI.getGenerativeModel({
           model: 'gemini-2.5-flash',
           generationConfig: {
-            responseMimeType: 'application/json',
             maxOutputTokens: 2048,
           },
         })
@@ -242,6 +241,7 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
 
       let discoverResult: DiscoverResult
       try {
+        fastify.log.info({ rawLength: raw.length, rawPreview: raw.slice(0, 200) }, 'Gemini /discover raw response')
         const start = raw.indexOf('{')
         const end   = raw.lastIndexOf('}')
         if (start === -1 || end === -1) throw new Error('No JSON object found')
