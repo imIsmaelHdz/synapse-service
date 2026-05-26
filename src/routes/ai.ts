@@ -242,7 +242,8 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
         const model = genAI.getGenerativeModel({
           model: 'gemini-2.5-flash',
           generationConfig: {
-            maxOutputTokens: 2048,
+            responseMimeType: 'application/json',
+            maxOutputTokens: 4096,
           },
         })
         const result = await model.generateContent(
