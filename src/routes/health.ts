@@ -16,7 +16,6 @@ const healthRoutes: FastifyPluginAsync = async (fastify) => {
   }, async () => ({
     status:  'ok',
     version: process.env.npm_package_version ?? '1.0.0',
-    build:   'discover-fix-v3',
   }))
 }
 
