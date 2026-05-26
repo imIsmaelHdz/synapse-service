@@ -43,7 +43,7 @@ const syncRoutes: FastifyPluginAsync = async (fastify) => {
       [uid, JSON.stringify(request.body)],
     )
 
-    // Keep only the 10 most recent snapshots per user — prune older ones
+    // Keep only the 3 most recent snapshots per user — prune older ones
     await fastify.pg.query(
       `DELETE FROM snapshots
        WHERE user_id = $1
@@ -51,7 +51,7 @@ const syncRoutes: FastifyPluginAsync = async (fastify) => {
            SELECT id FROM snapshots
            WHERE  user_id = $1
            ORDER  BY created_at DESC
-           LIMIT  10
+           LIMIT  3
          )`,
       [uid],
     )
