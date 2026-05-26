@@ -80,7 +80,7 @@ Rules:
 - Prefer surprising cross-domain connections over obvious same-genre picks
 - Each item must have a short "Because:" explanation (1–2 sentences) that connects it directly to the input source's themes or ideas
 - Use the same language the input is in (detect from the title and creator)
-- Return ONLY valid JSON, no markdown, no code fences, no extra text`
+- Output ONLY the raw JSON object — no introduction, no explanation, no markdown, no code fences, no text before or after the JSON`
 
 interface ExistingItem {
   title:   string
@@ -242,7 +242,6 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
         const model = genAI.getGenerativeModel({
           model: 'gemini-2.5-flash',
           generationConfig: {
-            responseMimeType: 'application/json',
             maxOutputTokens: 1024,
           },
         })
@@ -250,7 +249,8 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
           buildDiscoverPrompt(title, creator, type, existing),
         )
 
-        // MAX_TOKENS means the JSON was cut mid-stream — treat as failure.
+        // MAX_TOKENS means output was cut — treat as failure rather than
+        // attempting to parse truncated JSON.
         const candidate = result.response.candidates?.[0]
         const finishReason = candidate?.finishReason ?? 'STOP'
         if (finishReason !== 'STOP') {
