@@ -82,14 +82,25 @@ Rules:
 - Use the same language the input is in (detect from the title and creator)
 - Return ONLY valid JSON, no markdown, no code fences, no extra text`
 
-function buildDiscoverPrompt(title: string, creator: string, type: string): string {
+interface ExistingItem {
+  title:   string
+  creator: string
+  type:    string
+}
+
+function buildDiscoverPrompt(title: string, creator: string, type: string, existing: ExistingItem[] = []): string {
   const source = creator
     ? `"${title}" by ${creator} (${type})`
     : `"${title}" (${type})`
 
+  const exclusions = existing.length > 0
+    ? `\n\nThe user already has these in their library — do NOT recommend any of them:\n` +
+      existing.map((e) => `- "${e.title}"${e.creator ? ` by ${e.creator}` : ''} (${e.type})`).join('\n')
+    : ''
+
   return `${DISCOVER_SYSTEM_PROMPT}
 
-The user's source item: ${source}
+The user's source item: ${source}${exclusions}
 
 Return ONLY this JSON structure:
 {
@@ -194,7 +205,7 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
    * Gemini returns one book, one movie, and one podcast/video recommendation
    * with a "Because:" explanation for each.
    */
-  fastify.post<{ Body: { title: string; creator: string; type: string } }>(
+  fastify.post<{ Body: { title: string; creator: string; type: string; existing?: ExistingItem[] } }>(
     '/discover',
     {
       schema: {
@@ -205,12 +216,26 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
             title:   { type: 'string', minLength: 1, maxLength: 300 },
             creator: { type: 'string', maxLength: 200, default: '' },
             type:    { type: 'string', maxLength: 50 },
+            existing: {
+              type: 'array',
+              maxItems: 200,
+              default: [],
+              items: {
+                type: 'object',
+                required: ['title', 'type'],
+                properties: {
+                  title:   { type: 'string' },
+                  creator: { type: 'string', default: '' },
+                  type:    { type: 'string' },
+                },
+              },
+            },
           },
         },
       },
     },
     async (request, reply) => {
-      const { title, creator = '', type } = request.body
+      const { title, creator = '', type, existing = [] } = request.body
 
       let raw: string
       try {
@@ -221,7 +246,7 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
           },
         })
         const result = await model.generateContent(
-          buildDiscoverPrompt(title, creator, type),
+          buildDiscoverPrompt(title, creator, type, existing),
         )
 
         // finishReason can be MAX_TOKENS when the response hits the cap;
