@@ -69,6 +69,60 @@ interface DiscoverResult {
   serie: DiscoverItem
 }
 
+interface ExistingItem {
+  title:   string
+  creator: string
+  type:    string
+}
+
+type ReturnType = 'book' | 'movie' | 'serie'
+
+// ── Single-item prompt (used by the deck UI — one call per card) ──────────────
+
+const TYPE_LABELS: Record<ReturnType, string> = {
+  book:  'book (real, published, findable)',
+  movie: 'movie (real, released, findable)',
+  serie: 'podcast episode or YouTube video (real, findable online)',
+}
+
+const CREATOR_LABELS: Record<ReturnType, string> = {
+  book:  'Author name',
+  movie: 'Director name',
+  serie: 'Channel or host name',
+}
+
+function buildDiscoverSinglePrompt(
+  title: string,
+  creator: string,
+  sourceType: string,
+  returnType: ReturnType,
+  existing: ExistingItem[] = [],
+): string {
+  const source = creator
+    ? `"${title}" by ${creator} (${sourceType})`
+    : `"${title}" (${sourceType})`
+
+  const exclusions = existing.length > 0
+    ? `\n\nDo NOT recommend any of these (already in library):\n` +
+      existing.map((e) => `- "${e.title}"${e.creator ? ` by ${e.creator}` : ''} (${e.type})`).join('\n')
+    : ''
+
+  return `You are a recommendation engine for Synapse, a personal knowledge graph app.
+
+Suggest ONE ${TYPE_LABELS[returnType]} related to the source below.
+Rules:
+- Prefer surprising cross-domain connections over obvious same-genre picks
+- Include a short "Because:" explanation (1–2 sentences) tied to the source's actual themes
+- Use the same language as the source
+- Return ONLY valid JSON, no markdown, no extra text
+
+Source: ${source}${exclusions}
+
+Return ONLY: {"title": "...", "creator": "${CREATOR_LABELS[returnType]}", "reason": "Because..."}`
+}
+
+// ── Batch prompt (legacy — kept for backwards compatibility) ──────────────────
+
 const DISCOVER_SYSTEM_PROMPT = `You are a cross-media recommendation engine for Synapse, a personal knowledge graph app.
 
 Given a source the user has in their library (a book, movie, series, personal note, or topic), suggest three related items they might want to explore next:
@@ -81,12 +135,6 @@ Rules:
 - Each item must have a short "Because:" explanation (1–2 sentences) that connects it directly to the input source's themes or ideas
 - Use the same language the input is in (detect from the title and creator)
 - Return ONLY valid JSON, no markdown, no code fences, no extra text`
-
-interface ExistingItem {
-  title:   string
-  creator: string
-  type:    string
-}
 
 function buildDiscoverPrompt(title: string, creator: string, type: string, existing: ExistingItem[] = []): string {
   const source = creator
@@ -205,7 +253,15 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
    * Gemini returns one book, one movie, and one podcast/video recommendation
    * with a "Because:" explanation for each.
    */
-  fastify.post<{ Body: { title: string; creator: string; type: string; existing?: ExistingItem[] } }>(
+  fastify.post<{
+    Body: {
+      title: string
+      creator: string
+      type: string
+      existing?: ExistingItem[]
+      returnType?: ReturnType
+    }
+  }>(
     '/discover',
     {
       schema: {
@@ -213,9 +269,10 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
           type: 'object',
           required: ['title', 'type'],
           properties: {
-            title:   { type: 'string', minLength: 1, maxLength: 300 },
-            creator: { type: 'string', maxLength: 200, default: '' },
-            type:    { type: 'string', maxLength: 50 },
+            title:      { type: 'string', minLength: 1, maxLength: 300 },
+            creator:    { type: 'string', maxLength: 200, default: '' },
+            type:       { type: 'string', maxLength: 50 },
+            returnType: { type: 'string', enum: ['book', 'movie', 'serie'] },
             existing: {
               type: 'array',
               maxItems: 200,
@@ -235,10 +292,15 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request, reply) => {
-      const { title, creator = '', type, existing = [] } = request.body
+      const { title, creator = '', type, existing = [], returnType } = request.body
 
-      let raw: string
-      try {
+      const sanitise = (o: Record<string, unknown>): DiscoverItem => ({
+        title:   String(o['title']   ?? ''),
+        creator: String(o['creator'] ?? ''),
+        reason:  String(o['reason']  ?? ''),
+      })
+
+      const geminiCall = async (prompt: string) => {
         const model = genAI.getGenerativeModel({
           model: 'gemini-2.5-flash',
           generationConfig: {
@@ -246,24 +308,48 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
             maxOutputTokens: 4096,
           },
         })
-        const result = await model.generateContent(
-          buildDiscoverPrompt(title, creator, type, existing),
-        )
-
+        const result = await model.generateContent(prompt)
         const candidate = result.response.candidates?.[0]
         const finishReason = candidate?.finishReason ?? 'STOP'
         if (finishReason !== 'STOP' && finishReason !== 'MAX_TOKENS') {
-          fastify.log.warn({ finishReason }, 'Gemini /discover unexpected finishReason')
+          throw new Error(`unexpected finishReason: ${finishReason}`)
+        }
+        return result.response.text()
+      }
+
+      // ── Single-item mode (deck UI) ──────────────────────────────────────────
+      if (returnType) {
+        let raw: string
+        try {
+          raw = await geminiCall(
+            buildDiscoverSinglePrompt(title, creator, type, returnType, existing),
+          )
+        } catch (err) {
+          fastify.log.error(err, 'Gemini API error in /discover single')
           return reply.internalServerError('AI service unavailable — try again shortly')
         }
 
-        raw = result.response.text()
+        try {
+          const start = raw.indexOf('{')
+          const end   = raw.lastIndexOf('}')
+          if (start === -1 || end === -1) throw new Error('No JSON found')
+          const parsed = JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>
+          return sanitise(parsed)
+        } catch (parseErr) {
+          fastify.log.warn({ raw, parseErr: String(parseErr) }, 'Could not parse /discover single response')
+          return reply.internalServerError('Unexpected AI response format')
+        }
+      }
+
+      // ── Batch mode (legacy) ─────────────────────────────────────────────────
+      let raw: string
+      try {
+        raw = await geminiCall(buildDiscoverPrompt(title, creator, type, existing))
       } catch (err) {
         fastify.log.error(err, 'Gemini API error in /discover')
         return reply.internalServerError('AI service unavailable — try again shortly')
       }
 
-      let discoverResult: DiscoverResult
       try {
         fastify.log.info({ rawLength: raw.length, rawPreview: raw.slice(0, 200) }, 'Gemini /discover raw response')
         const start = raw.indexOf('{')
@@ -271,26 +357,16 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
         if (start === -1 || end === -1) throw new Error('No JSON object found')
         const parsed = JSON.parse(raw.slice(start, end + 1))
 
-        const sanitise = (obj: unknown): DiscoverItem => {
-          const o = (obj ?? {}) as Record<string, unknown>
-          return {
-            title:   String(o['title']   ?? ''),
-            creator: String(o['creator'] ?? ''),
-            reason:  String(o['reason']  ?? ''),
-          }
+        const discoverResult: DiscoverResult = {
+          book:  sanitise(parsed['book']  as Record<string, unknown> ?? {}),
+          movie: sanitise(parsed['movie'] as Record<string, unknown> ?? {}),
+          serie: sanitise(parsed['serie'] as Record<string, unknown> ?? {}),
         }
-
-        discoverResult = {
-          book:  sanitise(parsed['book']),
-          movie: sanitise(parsed['movie']),
-          serie: sanitise(parsed['serie']),
-        }
+        return discoverResult
       } catch (parseErr) {
         fastify.log.warn({ raw, parseErr: String(parseErr) }, 'Could not parse /discover response')
         return reply.internalServerError('Unexpected AI response format')
       }
-
-      return discoverResult
     },
   )
 
