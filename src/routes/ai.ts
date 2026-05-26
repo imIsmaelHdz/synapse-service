@@ -80,7 +80,7 @@ Rules:
 - Prefer surprising cross-domain connections over obvious same-genre picks
 - Each item must have a short "Because:" explanation (1–2 sentences) that connects it directly to the input source's themes or ideas
 - Use the same language the input is in (detect from the title and creator)
-- Output ONLY the raw JSON object — no introduction, no explanation, no markdown, no code fences, no text before or after the JSON`
+- Return ONLY valid JSON, no markdown, no code fences, no extra text`
 
 interface ExistingItem {
   title:   string
@@ -239,23 +239,20 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
 
       let raw: string
       try {
-        // gemini-2.0-flash: no thinking tokens, fast, more than capable
-        // for structured recommendation generation.
         const model = genAI.getGenerativeModel({
-          model: 'gemini-2.0-flash',
+          model: 'gemini-2.5-flash',
           generationConfig: {
-            maxOutputTokens: 1024,
+            responseMimeType: 'application/json',
+            maxOutputTokens: 4096,
           },
         })
         const result = await model.generateContent(
           buildDiscoverPrompt(title, creator, type, existing),
         )
 
-        // MAX_TOKENS means output was cut — treat as failure rather than
-        // attempting to parse truncated JSON.
         const candidate = result.response.candidates?.[0]
         const finishReason = candidate?.finishReason ?? 'STOP'
-        if (finishReason !== 'STOP') {
+        if (finishReason !== 'STOP' && finishReason !== 'MAX_TOKENS') {
           fastify.log.warn({ finishReason }, 'Gemini /discover unexpected finishReason')
           return reply.internalServerError('AI service unavailable — try again shortly')
         }
