@@ -243,18 +243,17 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
           model: 'gemini-2.5-flash',
           generationConfig: {
             responseMimeType: 'application/json',
-            maxOutputTokens: 512,
+            maxOutputTokens: 1024,
           },
         })
         const result = await model.generateContent(
           buildDiscoverPrompt(title, creator, type, existing),
         )
 
-        // finishReason can be MAX_TOKENS when the response hits the cap;
-        // text() will still return what was generated — attempt to use it.
+        // MAX_TOKENS means the JSON was cut mid-stream — treat as failure.
         const candidate = result.response.candidates?.[0]
         const finishReason = candidate?.finishReason ?? 'STOP'
-        if (finishReason !== 'STOP' && finishReason !== 'MAX_TOKENS') {
+        if (finishReason !== 'STOP') {
           fastify.log.warn({ finishReason }, 'Gemini /discover unexpected finishReason')
           return reply.internalServerError('AI service unavailable — try again shortly')
         }
