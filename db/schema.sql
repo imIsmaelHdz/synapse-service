@@ -15,10 +15,10 @@ CREATE TABLE IF NOT EXISTS users (
   created_at   TIMESTAMPTZ DEFAULT NOW()
 );
 
--- ── Snapshots (cloud backup of the local Hive graph) ──────────────────────────
--- payload is the full graph JSON exported from the Flutter app:
---   { books: [...], notes: [...], links: [...], exported_at: "..." }
--- We keep the 10 most recent snapshots per user (pruned on every push).
+-- ── Snapshots (legacy — kept for rollback during migration) ───────────────────
+-- New pushes no longer write here; pull falls back here only when the
+-- normalized tables are empty (first push after migration).
+-- Safe to DROP after all users have pushed at least once.
 CREATE TABLE IF NOT EXISTS snapshots (
   id         UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id    TEXT        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -28,3 +28,125 @@ CREATE TABLE IF NOT EXISTS snapshots (
 
 CREATE INDEX IF NOT EXISTS idx_snapshots_user_date
   ON snapshots (user_id, created_at DESC);
+
+-- ── Books ─────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS books (
+  id          TEXT        PRIMARY KEY,                            -- UUID from Flutter
+  user_id     TEXT        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title       TEXT        NOT NULL,
+  author      TEXT        NOT NULL DEFAULT '',
+  color_index INT         NOT NULL DEFAULT 0,
+  type        TEXT        NOT NULL DEFAULT 'book',
+  created_at  TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_books_user ON books (user_id);
+
+-- ── Notes ─────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS notes (
+  id         TEXT        PRIMARY KEY,                            -- UUID from Flutter
+  user_id    TEXT        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title      TEXT        NOT NULL,
+  body       TEXT        NOT NULL DEFAULT '',
+  book_id    TEXT        REFERENCES books(id) ON DELETE SET NULL,
+  topic      TEXT        NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_notes_user ON notes (user_id);
+CREATE INDEX IF NOT EXISTS idx_notes_book ON notes (book_id);
+
+-- ── Note links ────────────────────────────────────────────────────────────────
+-- Both wiki-parsed ([[Title]]) and manual connections.
+-- Unique on (user_id, source_id, target_id) — direction matters in the
+-- Flutter model so we keep both orderings if they ever coexist.
+CREATE TABLE IF NOT EXISTS note_links (
+  id         TEXT        PRIMARY KEY,                            -- UUID from Flutter
+  user_id    TEXT        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  source_id  TEXT        NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  target_id  TEXT        NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  is_manual  BOOLEAN     NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL,
+  UNIQUE (user_id, source_id, target_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_note_links_user   ON note_links (user_id);
+CREATE INDEX IF NOT EXISTS idx_note_links_source ON note_links (source_id);
+CREATE INDEX IF NOT EXISTS idx_note_links_target ON note_links (target_id);
+
+-- ── Graph layout ──────────────────────────────────────────────────────────────
+-- Persists force-directed node positions so the graph doesn't re-randomise
+-- across sessions. Positions are in canvas pixels (device-specific) so they
+-- are best-effort across different screen sizes.
+CREATE TABLE IF NOT EXISTS graph_layout (
+  note_id    TEXT             NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  user_id    TEXT             NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
+  x          DOUBLE PRECISION NOT NULL DEFAULT 0,
+  y          DOUBLE PRECISION NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ      NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (note_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_graph_layout_user ON graph_layout (user_id);
+
+-- ── One-time data migration ───────────────────────────────────────────────────
+-- Extracts each user's latest snapshot and populates the normalized tables.
+-- ON CONFLICT DO NOTHING makes this idempotent — safe to re-run.
+-- Run after creating the new tables on an existing database.
+
+-- 1. Books
+INSERT INTO books (id, user_id, title, author, color_index, type, created_at)
+SELECT
+  b->>'id',
+  s.user_id,
+  COALESCE(b->>'title', ''),
+  COALESCE(b->>'author', ''),
+  COALESCE((b->>'colorIndex')::INT, 0),
+  COALESCE(b->>'type', 'book'),
+  to_timestamp(COALESCE((b->>'createdAt')::BIGINT, 0) / 1000.0)
+FROM (
+  SELECT DISTINCT ON (user_id) user_id, payload
+  FROM   snapshots
+  ORDER  BY user_id, created_at DESC
+) s,
+LATERAL jsonb_array_elements(s.payload->'books') AS b
+ON CONFLICT DO NOTHING;
+
+-- 2. Notes (only where the book already exists in the books table)
+INSERT INTO notes (id, user_id, title, body, book_id, topic, created_at, updated_at)
+SELECT
+  n->>'id',
+  s.user_id,
+  COALESCE(n->>'title', ''),
+  COALESCE(n->>'body', ''),
+  NULLIF(n->>'bookId', ''),
+  COALESCE(n->>'topic', ''),
+  to_timestamp(COALESCE((n->>'createdAt')::BIGINT, 0) / 1000.0),
+  to_timestamp(COALESCE((n->>'updatedAt')::BIGINT, 0) / 1000.0)
+FROM (
+  SELECT DISTINCT ON (user_id) user_id, payload
+  FROM   snapshots
+  ORDER  BY user_id, created_at DESC
+) s,
+LATERAL jsonb_array_elements(s.payload->'notes') AS n
+ON CONFLICT DO NOTHING;
+
+-- 3. Note links (only where both notes already exist)
+INSERT INTO note_links (id, user_id, source_id, target_id, is_manual, created_at)
+SELECT
+  l->>'id',
+  s.user_id,
+  l->>'sourceId',
+  l->>'targetId',
+  COALESCE((l->>'isManual')::BOOLEAN, false),
+  to_timestamp(COALESCE((l->>'createdAt')::BIGINT, 0) / 1000.0)
+FROM (
+  SELECT DISTINCT ON (user_id) user_id, payload
+  FROM   snapshots
+  ORDER  BY user_id, created_at DESC
+) s,
+LATERAL jsonb_array_elements(s.payload->'links') AS l
+WHERE EXISTS (SELECT 1 FROM notes WHERE id = l->>'sourceId')
+  AND EXISTS (SELECT 1 FROM notes WHERE id = l->>'targetId')
+ON CONFLICT DO NOTHING;

@@ -117,6 +117,9 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
    * Returns suggested links with explanations — the user accepts or dismisses each.
    */
   fastify.post<{ Body: { notes: Note[] } }>('/suggest', {
+    config: {
+      rateLimit: { max: 20, timeWindow: '1 minute' }, // protect Gemini costs
+    },
     schema: {
       body: {
         type: 'object',
@@ -211,6 +214,9 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
   }>(
     '/discover',
     {
+      config: {
+        rateLimit: { max: 20, timeWindow: '1 minute' }, // protect Gemini costs
+      },
       schema: {
         body: {
           type: 'object',

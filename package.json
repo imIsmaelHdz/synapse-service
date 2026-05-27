@@ -4,30 +4,31 @@
   "description": "Synapse API — AI suggestions + cloud backup for a local-first knowledge graph",
   "main": "dist/server.js",
   "scripts": {
-    "dev":         "tsx watch src/server.ts",
-    "build":       "tsc && cp -r src/prompts dist/prompts",
-    "start":       "node dist/server.js",
-    "db:up":       "docker compose up -d postgres",
-    "db:down":     "docker compose down",
-    "db:migrate":  "docker compose exec -T postgres psql -U synapse -d synapse -f - < db/schema.sql",
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc && cp -r src/prompts dist/prompts",
+    "start": "node dist/server.js",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:migrate": "docker compose exec -T postgres psql -U synapse -d synapse -f - < db/schema.sql",
     "setup:local": "npm run db:up && sleep 3 && npm run db:migrate",
-    "test:local":  "bash scripts/smoke-test.sh"
+    "test:local": "bash scripts/smoke-test.sh"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.21.0",
-    "@fastify/cors":     "^8.5.0",
-    "@fastify/helmet":   "^11.1.1",
+    "@fastify/cors": "^8.5.0",
+    "@fastify/helmet": "^11.1.1",
     "@fastify/postgres": "^5.2.2",
+    "@fastify/rate-limit": "^10.3.0",
     "@fastify/sensible": "^5.5.0",
-    "fastify":           "^4.26.0",
-    "fastify-plugin":    "^4.5.1",
-    "firebase-admin":    "^11.11.0",
-    "dotenv":            "^16.3.1"
+    "@google/generative-ai": "^0.21.0",
+    "dotenv": "^16.3.1",
+    "fastify": "^4.26.0",
+    "fastify-plugin": "^4.5.1",
+    "firebase-admin": "^11.11.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
     "pino-pretty": "^10.3.1",
-    "tsx":         "^4.7.0",
-    "typescript":  "^5.3.3"
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
   }
 }
