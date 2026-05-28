@@ -1,4 +1,5 @@
 import { FastifyPluginAsync } from 'fastify'
+import { encrypt, decrypt } from '../lib/crypto'
 
 /**
  * Local-first sync — Hive is the source of truth on the device.
@@ -181,7 +182,7 @@ const syncRoutes: FastifyPluginAsync = async (fastify) => {
         [uid, bookIds],
       )
 
-      // 2. Upsert notes
+      // 2. Upsert notes — title, body, and topic are encrypted at rest
       for (const n of notes) {
         await client.query(
           `INSERT INTO notes (id, user_id, title, body, book_id, topic, created_at, updated_at)
@@ -192,8 +193,14 @@ const syncRoutes: FastifyPluginAsync = async (fastify) => {
            book_id    = EXCLUDED.book_id,
            topic      = EXCLUDED.topic,
            updated_at = EXCLUDED.updated_at`,
-          [n.id, uid, n.title, n.body ?? '', n.bookId || null, n.topic ?? '',
-            n.createdAt, n.updatedAt],
+          [
+            n.id, uid,
+            encrypt(n.title),
+            encrypt(n.body ?? ''),
+            n.bookId || null,
+            encrypt(n.topic ?? ''),
+            n.createdAt, n.updatedAt,
+          ],
         )
       }
 
@@ -294,10 +301,10 @@ const syncRoutes: FastifyPluginAsync = async (fastify) => {
         })),
         notes: noteRows.map(r => ({
           id: r.id,
-          title: r.title,
-          body: r.body,
+          title: decrypt(r.title),
+          body: decrypt(r.body),
           bookId: r.book_id ?? '',
-          topic: r.topic,
+          topic: decrypt(r.topic),
           createdAt: Number(r.created_at),
           updatedAt: Number(r.updated_at),
         })),
