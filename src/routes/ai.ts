@@ -262,6 +262,7 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
       type: string
       existing?: ExistingItem[]
       returnType?: ReturnType
+      forceRefresh?: boolean
     }
   }>(
     '/discover',
@@ -292,12 +293,13 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
                 },
               },
             },
+            forceRefresh: { type: 'boolean', default: false },
           },
         },
       },
     },
     async (request, reply) => {
-      const { title, creator = '', type, existing = [], returnType } = request.body
+      const { title, creator = '', type, existing = [], returnType, forceRefresh = false } = request.body
 
       const sanitise = (o: Record<string, unknown>): DiscoverItem => ({
         title:   String(o['title']   ?? ''),
@@ -307,12 +309,17 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
 
       // ── Single-item mode (deck UI) ──────────────────────────────────────────
       if (returnType) {
-        // 1. Check server-side cache first — instant response, no Gemini call
+        // 1. Check server-side cache — skip when forceRefresh=true (manual refresh)
         const key = cacheKey(title, creator, type, returnType)
-        const cached = cacheGet(key)
-        if (cached) {
-          fastify.log.debug({ key }, 'discover cache hit')
-          return cached
+        if (!forceRefresh) {
+          const cached = cacheGet(key)
+          if (cached) {
+            fastify.log.debug({ key }, 'discover cache hit')
+            return cached
+          }
+        } else {
+          fastify.log.debug({ key }, 'discover cache bypassed (forceRefresh)')
+          _discoverCache.delete(key)
         }
 
         let raw: string
