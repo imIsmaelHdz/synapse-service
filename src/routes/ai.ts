@@ -7,7 +7,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '')
 // ── Model instances ───────────────────────────────────────────────────────────
 // /suggest  — gemini-2.5-flash: benefits from deep reasoning to find non-obvious
 //             connections across a user's notes.
-// /discover — gemini-2.0-flash: simple recommendation task; no thinking overhead,
+// /discover — gemini-2.5-flash-lite: simple recommendation task; no thinking overhead,
 //             significantly faster cold response (~1-2s vs ~4-6s).
 
 const suggestModel = genAI.getGenerativeModel({
@@ -19,7 +19,7 @@ const suggestModel = genAI.getGenerativeModel({
 })
 
 const discoverModel = genAI.getGenerativeModel({
-  model: 'gemini-2.0-flash',
+  model: 'gemini-2.5-flash-lite',
   generationConfig: {
     responseMimeType: 'application/json',
     maxOutputTokens: 300, // single {title, creator, reason} needs ~100 tokens
