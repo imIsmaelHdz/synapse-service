@@ -56,7 +56,7 @@ export function decrypt(ciphertext: string): string {
   const iv       = buf.subarray(0, IV_BYTES)
   const tag      = buf.subarray(IV_BYTES, IV_BYTES + TAG_BYTES)
   const body     = buf.subarray(IV_BYTES + TAG_BYTES)
-  const decipher = createDecipheriv(ALGO, key(), iv)
+  const decipher = createDecipheriv(ALGO, key(), iv, { authTagLength: TAG_BYTES })
   decipher.setAuthTag(tag)
 
   return Buffer.concat([decipher.update(body), decipher.final()]).toString('utf8')
