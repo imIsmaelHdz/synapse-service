@@ -4,6 +4,66 @@ import { loadPrompt } from '../lib/prompt-loader'
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '')
 
+// ── Model instances ───────────────────────────────────────────────────────────
+// /suggest  — gemini-2.5-flash: benefits from deep reasoning to find non-obvious
+//             connections across a user's notes.
+// /discover — gemini-2.0-flash: simple recommendation task; no thinking overhead,
+//             significantly faster cold response (~1-2s vs ~4-6s).
+
+const suggestModel = genAI.getGenerativeModel({
+  model: 'gemini-2.5-flash',
+  generationConfig: {
+    responseMimeType: 'application/json',
+    maxOutputTokens: 4096,
+  },
+})
+
+const discoverModel = genAI.getGenerativeModel({
+  model: 'gemini-2.0-flash',
+  generationConfig: {
+    responseMimeType: 'application/json',
+    maxOutputTokens: 300, // single {title, creator, reason} needs ~100 tokens
+  },
+})
+
+// ── Server-side discover cache ────────────────────────────────────────────────
+// Keyed by "title::creator::sourceType::returnType" (all lowercased + trimmed).
+// Ignores the per-user `existing` exclusion list for caching — the chance of
+// Gemini recommending something the user already has is very low for popular
+// titles, and the speed benefit is significant.
+//
+// TTL  : 24 hours — recommendations are stable over that window
+// Max  : 500 entries — each entry is ~200 bytes; total ≤ 100 KB RAM
+
+interface DiscoverCacheEntry {
+  item:      DiscoverItem
+  expiresAt: number
+}
+
+const _discoverCache = new Map<string, DiscoverCacheEntry>()
+const CACHE_TTL_MS   = 24 * 60 * 60 * 1000   // 24 h
+const CACHE_MAX      = 500
+
+function cacheKey(title: string, creator: string, sourceType: string, returnType: string): string {
+  return [title, creator, sourceType, returnType].map((s) => s.trim().toLowerCase()).join('::')
+}
+
+function cacheGet(key: string): DiscoverItem | null {
+  const entry = _discoverCache.get(key)
+  if (!entry) return null
+  if (Date.now() > entry.expiresAt) { _discoverCache.delete(key); return null }
+  return entry.item
+}
+
+function cacheSet(key: string, item: DiscoverItem): void {
+  if (_discoverCache.size >= CACHE_MAX) {
+    // Evict the oldest insertion (Map preserves insertion order)
+    const firstKey = _discoverCache.keys().next().value
+    if (firstKey !== undefined) _discoverCache.delete(firstKey)
+  }
+  _discoverCache.set(key, { item, expiresAt: Date.now() + CACHE_TTL_MS })
+}
+
 // ── /suggest types ────────────────────────────────────────────────────────────
 
 interface Note {
@@ -149,15 +209,7 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
 
     let raw: string
     try {
-      const model = genAI.getGenerativeModel({
-        model: 'gemini-2.5-flash',
-        generationConfig: {
-          responseMimeType: 'application/json',
-          maxOutputTokens: 4096,
-        },
-      })
-
-      const result = await model.generateContent(buildPrompt(notes))
+      const result = await suggestModel.generateContent(buildPrompt(notes))
 
       const candidate = result.response.candidates?.[0]
       const finishReason = candidate?.finishReason ?? 'STOP'
@@ -253,30 +305,27 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
         reason:  String(o['reason']  ?? ''),
       })
 
-      const geminiCall = async (prompt: string) => {
-        const model = genAI.getGenerativeModel({
-          model: 'gemini-2.5-flash',
-          generationConfig: {
-            responseMimeType: 'application/json',
-            maxOutputTokens: 4096,
-          },
-        })
-        const result = await model.generateContent(prompt)
-        const candidate = result.response.candidates?.[0]
-        const finishReason = candidate?.finishReason ?? 'STOP'
-        if (finishReason !== 'STOP' && finishReason !== 'MAX_TOKENS') {
-          throw new Error(`unexpected finishReason: ${finishReason}`)
-        }
-        return result.response.text()
-      }
-
       // ── Single-item mode (deck UI) ──────────────────────────────────────────
       if (returnType) {
+        // 1. Check server-side cache first — instant response, no Gemini call
+        const key = cacheKey(title, creator, type, returnType)
+        const cached = cacheGet(key)
+        if (cached) {
+          fastify.log.debug({ key }, 'discover cache hit')
+          return cached
+        }
+
         let raw: string
         try {
-          raw = await geminiCall(
+          const result = await discoverModel.generateContent(
             buildDiscoverSinglePrompt(title, creator, type, returnType, existing),
           )
+          const candidate = result.response.candidates?.[0]
+          const finishReason = candidate?.finishReason ?? 'STOP'
+          if (finishReason !== 'STOP' && finishReason !== 'MAX_TOKENS') {
+            throw new Error(`unexpected finishReason: ${finishReason}`)
+          }
+          raw = result.response.text()
         } catch (err) {
           fastify.log.error(err, 'Gemini API error in /discover single')
           return reply.internalServerError('AI service unavailable — try again shortly')
@@ -286,8 +335,10 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
           const start = raw.indexOf('{')
           const end   = raw.lastIndexOf('}')
           if (start === -1 || end === -1) throw new Error('No JSON found')
-          const parsed = JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>
-          return sanitise(parsed)
+          const item = sanitise(JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>)
+          // 2. Store in cache before returning
+          cacheSet(key, item)
+          return item
         } catch (parseErr) {
           fastify.log.warn({ raw, parseErr: String(parseErr) }, 'Could not parse /discover single response')
           return reply.internalServerError('Unexpected AI response format')
@@ -297,7 +348,15 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
       // ── Batch mode (legacy) ─────────────────────────────────────────────────
       let raw: string
       try {
-        raw = await geminiCall(buildDiscoverPrompt(title, creator, type, existing))
+        const result = await discoverModel.generateContent(
+          buildDiscoverPrompt(title, creator, type, existing),
+        )
+        const candidate = result.response.candidates?.[0]
+        const finishReason = candidate?.finishReason ?? 'STOP'
+        if (finishReason !== 'STOP' && finishReason !== 'MAX_TOKENS') {
+          throw new Error(`unexpected finishReason: ${finishReason}`)
+        }
+        raw = result.response.text()
       } catch (err) {
         fastify.log.error(err, 'Gemini API error in /discover')
         return reply.internalServerError('AI service unavailable — try again shortly')
