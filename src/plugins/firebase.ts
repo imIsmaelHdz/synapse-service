@@ -38,6 +38,12 @@ const firebasePlugin: FastifyPluginAsync = async (fastify) => {
     } catch {
       return reply.unauthorized('Invalid or expired token')
     }
+
+    // Block unverified email/password accounts.
+    // Google Sign-In always has email_verified = true, so they pass automatically.
+    if (!request.user.email_verified) {
+      return reply.unauthorized('Please verify your email address before using the app.')
+    }
   })
 }
 
