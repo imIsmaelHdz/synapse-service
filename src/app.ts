@@ -13,9 +13,16 @@ import syncRoutes   from './routes/sync'
 import aiRoutes     from './routes/ai'
 
 export async function buildApp () {
+  // In production, never allow log level below 'info' — debug/trace logs can
+  // leak request bodies and note content.
+  const isProd    = process.env.NODE_ENV === 'production'
+  const logLevel  = isProd
+    ? 'info'                                        // floor in prod
+    : (process.env.LOG_LEVEL ?? 'info')             // dev can lower freely
+
   const app = Fastify({
     logger: {
-      level: process.env.LOG_LEVEL ?? 'info',
+      level: logLevel,
       ...(process.env.NODE_ENV === 'development' && {
         transport: { target: 'pino-pretty' },
       }),
