@@ -350,16 +350,22 @@ const syncRoutes: FastifyPluginAsync = async (fastify) => {
 
     if (layout.length === 0) return reply.send({ updated: 0 })
 
-    for (const { note_id, x, y } of layout) {
-      // Only persist layout for notes that actually belong to this user
-      await fastify.pg.query(
-        `INSERT INTO graph_layout (note_id, user_id, x, y, updated_at)
-         VALUES ($1, $2, $3, $4, NOW())
-         ON CONFLICT (note_id, user_id) DO UPDATE
-         SET x = EXCLUDED.x, y = EXCLUDED.y, updated_at = NOW()`,
-        [note_id, uid, x, y],
-      )
-    }
+    // Single batch upsert — one round-trip regardless of graph size.
+    // Builds: ($1,$2,$3,$4,NOW()), ($5,$6,$7,$8,NOW()), …
+    const values: (string | number)[] = []
+    const placeholders = layout.map(({ note_id, x, y }, i) => {
+      const base = i * 4
+      values.push(note_id, uid, x, y)
+      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, NOW())`
+    })
+
+    await fastify.pg.query(
+      `INSERT INTO graph_layout (note_id, user_id, x, y, updated_at)
+       VALUES ${placeholders.join(', ')}
+       ON CONFLICT (note_id, user_id) DO UPDATE
+       SET x = EXCLUDED.x, y = EXCLUDED.y, updated_at = NOW()`,
+      values,
+    )
 
     return reply.send({ updated: layout.length })
   })

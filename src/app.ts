@@ -42,13 +42,19 @@ export async function buildApp () {
   })
 
   // ── Rate limiting ────────────────────────────────────────────────────────────
-  // Global: 200 req / minute per IP — protects all routes from flooding.
-  // AI routes override this with a tighter limit (see routes/ai.ts).
+  // Global: 200 req / minute.
+  // Key: user UID when authenticated (avoids shared-IP collateral damage on
+  // mobile hotspots), falling back to IP for unauthenticated paths.
+  // AI routes override max with a tighter limit (see routes/ai.ts).
   await app.register(rateLimit, {
     global:     true,
     max:        200,
     timeWindow: '1 minute',
-    keyGenerator: (request) => request.ip,
+    keyGenerator: (request) => {
+      // request.user is set by the Firebase auth hook on protected routes
+      const uid = (request as any).user?.uid as string | undefined
+      return uid ?? request.ip
+    },
     errorResponseBuilder: (_request, context) => ({
       statusCode: 429,
       error:      'Too Many Requests',
