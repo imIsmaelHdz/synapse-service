@@ -1,5 +1,13 @@
 import { FastifyPluginAsync } from 'fastify'
 
+// ── Row type for the users table ──────────────────────────────────────────────
+interface UserRow {
+  id:           string
+  email:        string | null
+  display_name: string | null
+  created_at:   string
+}
+
 /**
  * Called once right after the user signs in with Firebase on the Flutter app.
  * Upserts the user into our DB so the other tables can reference them.
@@ -10,7 +18,7 @@ const userRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/sync', async (request, reply) => {
     const { uid, email, name } = request.user
 
-    const { rows } = await fastify.pg.query(
+    const { rows } = await fastify.pg.query<UserRow>(
       `INSERT INTO users (id, email, display_name)
        VALUES ($1, $2, $3)
        ON CONFLICT (id) DO UPDATE

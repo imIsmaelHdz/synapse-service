@@ -54,33 +54,47 @@ interface LayoutPoint {
   y: number
 }
 
-// Database row types (SELECT result shapes)
+// ── Database row types (SELECT result shapes) ─────────────────────────────────
+// These are passed as the generic parameter to fastify.pg.query<T>() so the
+// compiler verifies that every property access on `rows` is valid.
 
 interface BookRow {
-  id: string
-  title: string
-  author: string
+  id:          string
+  title:       string
+  author:      string
   color_index: number
-  type: string
-  created_at: string
+  type:        string
+  created_at:  string  // bigint epoch ms returned as string by pg driver
 }
 
 interface NoteRow {
-  id: string
-  title: string
-  body: string
-  book_id: string | null
-  topic: string
+  id:         string
+  title:      string  // AES-256-GCM encrypted
+  body:       string  // AES-256-GCM encrypted
+  book_id:    string | null
+  topic:      string  // AES-256-GCM encrypted
   created_at: string
   updated_at: string
 }
 
 interface LinkRow {
-  id: string
-  source_id: string
-  target_id: string
-  is_manual: boolean
+  id:         string
+  source_id:  string
+  target_id:  string
+  is_manual:  boolean
   created_at: string
+}
+
+interface SnapshotRow {
+  id:         string
+  payload:    unknown  // opaque JSONB blob — shaped by Flutter
+  created_at: string
+}
+
+interface LayoutRow {
+  note_id: string
+  x:       number
+  y:       number
 }
 
 const syncRoutes: FastifyPluginAsync = async (fastify) => {
@@ -244,17 +258,17 @@ const syncRoutes: FastifyPluginAsync = async (fastify) => {
     const { uid } = request.user
 
     // Check if this user has data in the normalized tables
-    const { rows: bookRows } = (await fastify.pg.query(
+    const { rows: bookRows } = await fastify.pg.query<BookRow>(
       `SELECT id, title, author, color_index, type,
               round(extract(epoch from created_at) * 1000)::bigint AS created_at
        FROM   books
        WHERE  user_id = $1`,
       [uid],
-    )) as { rows: BookRow[] }
+    )
 
-    // Legacy fallback
+    // Legacy fallback — user hasn't pushed via the new sync path yet
     if (bookRows.length === 0) {
-      const { rows } = await fastify.pg.query(
+      const { rows } = await fastify.pg.query<SnapshotRow>(
         `SELECT id, payload, created_at
          FROM   snapshots
          WHERE  user_id = $1
@@ -265,28 +279,28 @@ const syncRoutes: FastifyPluginAsync = async (fastify) => {
       if (!rows[0]) return reply.notFound('No snapshot found — push from your device first')
       return {
         snapshot_id: rows[0].id,
-        saved_at: rows[0].created_at,
-        graph: rows[0].payload,
+        saved_at:    rows[0].created_at,
+        graph:       rows[0].payload,
       }
     }
 
     // Assemble from normalized tables
-    const { rows: noteRows } = (await fastify.pg.query(
+    const { rows: noteRows } = await fastify.pg.query<NoteRow>(
       `SELECT id, title, body, book_id, topic,
               round(extract(epoch from created_at) * 1000)::bigint AS created_at,
               round(extract(epoch from updated_at) * 1000)::bigint AS updated_at
        FROM   notes
        WHERE  user_id = $1`,
       [uid],
-    )) as { rows: NoteRow[] }
+    )
 
-    const { rows: linkRows } = (await fastify.pg.query(
+    const { rows: linkRows } = await fastify.pg.query<LinkRow>(
       `SELECT id, source_id, target_id, is_manual,
               round(extract(epoch from created_at) * 1000)::bigint AS created_at
        FROM   note_links
        WHERE  user_id = $1`,
       [uid],
-    )) as { rows: LinkRow[] }
+    )
 
     return {
       saved_at: new Date().toISOString(),
@@ -375,9 +389,7 @@ const syncRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/layout', async (request, reply) => {
     const { uid } = request.user
 
-    const { rows } = await fastify.pg.query<{
-      note_id: string; x: number; y: number
-    }>(
+    const { rows } = await fastify.pg.query<LayoutRow>(
       `SELECT note_id, x, y
        FROM   graph_layout
        WHERE  user_id = $1`,
