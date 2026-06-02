@@ -102,9 +102,10 @@ function cacheSet(key: string, item: DiscoverItem): void {
 // ── /suggest types ────────────────────────────────────────────────────────────
 
 interface Note {
-  id:      string
-  title:   string
-  content: string
+  id:       string
+  title:    string
+  content:  string
+  sourceId?: string  // book/movie/serie/topic id — used for diverse graph sampling
 }
 
 interface Suggestion {
@@ -113,12 +114,60 @@ interface Suggestion {
   reason:         string
 }
 
-const MAX_NOTES   = 60
+const SAMPLE_SIZE = 10    // notes sent to Gemini per request
 const MAX_CONTENT = 400   // chars per note
 
+/**
+ * Picks `count` notes spread across different books/sources (graph sections).
+ * Round-robins across books so no single source dominates the batch.
+ * Falls back to a simple random shuffle when bookId is absent.
+ */
+function sampleDiverse(notes: Note[], count = SAMPLE_SIZE): Note[] {
+  if (notes.length <= count) return notes
+
+  // Group by bookId (or a single "unknown" bucket if missing)
+  const byBook = new Map<string, Note[]>()
+  for (const note of notes) {
+    const key = note.sourceId ?? '__unknown__'
+    if (!byBook.has(key)) byBook.set(key, [])
+    byBook.get(key)!.push(note)
+  }
+
+  // Shuffle each bucket so round-robin picks are random within each book
+  for (const bucket of byBook.values()) {
+    for (let i = bucket.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[bucket[i], bucket[j]] = [bucket[j], bucket[i]]
+    }
+  }
+
+  const buckets  = [...byBook.values()]
+  const pointers = new Array(buckets.length).fill(0)
+  const result: Note[] = []
+
+  // Round-robin until we have `count` notes or exhaust all buckets
+  let round = 0
+  while (result.length < count) {
+    let added = false
+    for (let b = 0; b < buckets.length && result.length < count; b++) {
+      const idx = round * buckets.length + b  // not really — use pointer
+      const ptr = pointers[b]
+      if (ptr < buckets[b].length) {
+        result.push(buckets[b][ptr])
+        pointers[b]++
+        added = true
+      }
+    }
+    if (!added) break  // all buckets exhausted
+    round++
+  }
+
+  return result
+}
+
 function buildPrompt(notes: Note[]): string {
-  const formatted = notes
-    .slice(0, MAX_NOTES)
+  const sampled   = sampleDiverse(notes, SAMPLE_SIZE)
+  const formatted = sampled
     .map((n) => `[${n.id}] ${n.title}\n${n.content.slice(0, MAX_CONTENT)}`)
     .join('\n\n---\n\n')
 
@@ -223,14 +272,15 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
           notes: {
             type:     'array',
             minItems: 2,
-            maxItems: MAX_NOTES,
+            maxItems: 500,  // accept full graph; sampling to 10 happens server-side
             items: {
               type:     'object',
               required: ['id', 'title', 'content'],
               properties: {
-                id:      { type: 'string' },
-                title:   { type: 'string' },
-                content: { type: 'string' },
+                id:       { type: 'string' },
+                title:    { type: 'string' },
+                content:  { type: 'string' },
+                sourceId: { type: 'string' }, // book/movie/serie/topic id
               },
             },
           },
