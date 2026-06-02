@@ -1,4 +1,5 @@
 import { FastifyPluginAsync } from 'fastify'
+import admin from 'firebase-admin'
 
 // ── Row type for the users table ──────────────────────────────────────────────
 interface UserRow {
@@ -29,6 +30,38 @@ const userRoutes: FastifyPluginAsync = async (fastify) => {
     )
 
     return reply.code(201).send(rows[0])
+  })
+
+  /**
+   * DELETE /v1/users/me
+   *
+   * Permanently deletes the authenticated user:
+   *   1. Removes the row from Postgres `users` table.
+   *      All child rows (books, notes, note_links, ai_usage, etc.)
+   *      cascade-delete automatically via ON DELETE CASCADE.
+   *   2. Deletes the Firebase Auth account so the UID can never sign in again.
+   *
+   * Apple App Store guidelines (June 2022) require in-app account deletion.
+   */
+  fastify.delete('/me', async (request, reply) => {
+    const { uid } = request.user
+
+    // 1. Delete from Postgres — cascade handles all child data
+    await fastify.pg.query(
+      `DELETE FROM users WHERE id = $1`,
+      [uid],
+    )
+
+    // 2. Delete from Firebase Auth
+    try {
+      await admin.auth().deleteUser(uid)
+    } catch (err) {
+      // Log but don't fail — Postgres data is already gone.
+      // The Firebase account will be an orphan; it can't access any data.
+      fastify.log.warn({ uid, err }, 'Firebase deleteUser failed after Postgres delete')
+    }
+
+    return reply.code(204).send()
   })
 
 }
