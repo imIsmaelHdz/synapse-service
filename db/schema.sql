@@ -90,6 +90,20 @@ CREATE TABLE IF NOT EXISTS graph_layout (
 
 CREATE INDEX IF NOT EXISTS idx_graph_layout_user ON graph_layout (user_id);
 
+-- ── AI usage counters ────────────────────────────────────────────────────────
+-- Tracks per-user daily AI call counts.
+-- suggest_count: hidden-connection generations used today.
+CREATE TABLE IF NOT EXISTS ai_usage (
+  uid           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  date          DATE NOT NULL,                                      -- UTC date
+  suggest_count INT  NOT NULL DEFAULT 0,
+  PRIMARY KEY (uid, date)
+);
+
+-- Auto-purge rows older than 7 days to keep the table small.
+-- Run this periodically (e.g. pg_cron) or just let old rows accumulate —
+-- the query always filters by today's date so stale rows are harmless.
+
 -- ── One-time data migration ───────────────────────────────────────────────────
 -- Extracts each user's latest snapshot and populates the normalized tables.
 -- ON CONFLICT DO NOTHING makes this idempotent — safe to re-run.
