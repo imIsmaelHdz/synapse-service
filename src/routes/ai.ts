@@ -165,13 +165,26 @@ function sampleDiverse(notes: Note[], count = SAMPLE_SIZE): Note[] {
   return result
 }
 
-function buildPrompt(notes: Note[]): string {
+interface ExistingLink {
+  source_note_id: string
+  target_note_id: string
+}
+
+function buildPrompt(notes: Note[], existingLinks: ExistingLink[] = []): string {
   const sampled   = sampleDiverse(notes, SAMPLE_SIZE)
   const formatted = sampled
     .map((n) => `[${n.id}] ${n.title}\n${n.content.slice(0, MAX_CONTENT)}`)
     .join('\n\n---\n\n')
 
-  return loadPrompt('suggest', { notes: formatted })
+  // Build exclusion block so Gemini never suggests already-connected pairs
+  const exclusionBlock = existingLinks.length > 0
+    ? `\n\nDo NOT suggest any of these already-connected pairs:\n` +
+      existingLinks
+        .map((l) => `- ${l.source_note_id} ↔ ${l.target_note_id}`)
+        .join('\n')
+    : ''
+
+  return loadPrompt('suggest', { notes: formatted + exclusionBlock })
 }
 
 // ── /discover types ───────────────────────────────────────────────────────────
@@ -260,7 +273,7 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
    * Gemini finds non-obvious semantic connections.
    * Returns suggested links with explanations — the user accepts or dismisses each.
    */
-  fastify.post<{ Body: { notes: Note[] } }>('/suggest', {
+  fastify.post<{ Body: { notes: Note[], existingLinks?: ExistingLink[] } }>('/suggest', {
     config: {
       rateLimit: { max: 20, timeWindow: '1 minute' }, // protect Gemini costs
     },
@@ -302,12 +315,12 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
       })
     }
 
-    const { notes } = request.body
+    const { notes, existingLinks = [] } = request.body
     const noteIds = new Set(notes.map((n) => n.id))
 
     let raw: string
     try {
-      const result = await suggestModel.generateContent(buildPrompt(notes))
+      const result = await suggestModel.generateContent(buildPrompt(notes, existingLinks))
 
       const candidate = result.response.candidates?.[0]
       const finishReason = candidate?.finishReason ?? 'STOP'
