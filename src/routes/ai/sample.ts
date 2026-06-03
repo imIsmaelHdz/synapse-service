@@ -8,7 +8,11 @@ export const MAX_CONTENT = 400   // chars per note
  * Round-robins across books so no single source dominates the batch.
  * Falls back to a simple random shuffle when bookId is absent.
  */
-export function sampleDiverse(notes: Note[], count = SAMPLE_SIZE): Note[] {
+export function sampleDiverse (
+  notes: Note[],
+  count = SAMPLE_SIZE,
+  rng: () => number = Math.random,
+): Note[] {
   if (notes.length <= count) return notes
 
   // Group by bookId (or a single "unknown" bucket if missing)
@@ -22,7 +26,7 @@ export function sampleDiverse(notes: Note[], count = SAMPLE_SIZE): Note[] {
   // Shuffle each bucket so round-robin picks are random within each book
   for (const bucket of byBook.values()) {
     for (let i = bucket.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1))
+      const j = Math.floor(rng() * (i + 1))
       ;[bucket[i], bucket[j]] = [bucket[j], bucket[i]]
     }
   }

@@ -2,7 +2,8 @@ import { FastifyInstance } from 'fastify'
 import { SUGGEST_DAILY_LIMIT } from '../../../config/ai'
 import { suggestModel } from '../gemini'
 import { buildPrompt } from '../prompt-builders'
-import type { ExistingLink, Note, Suggestion } from '../types'
+import { normalizeSuggestions, parseGeminiJsonObject } from '../gemini-json'
+import type { ExistingLink, Note } from '../types'
 import { getSuggestUsageToday, incrementSuggestUsage } from '../usage'
 
 export function registerSuggestRoute (fastify: FastifyInstance) {
@@ -76,21 +77,9 @@ export function registerSuggestRoute (fastify: FastifyInstance) {
       return reply.internalServerError('AI service unavailable — try again shortly')
     }
 
-    let suggestions: Suggestion[] = []
+    let suggestions
     try {
-      const start = raw.indexOf('{')
-      const end   = raw.lastIndexOf('}')
-      if (start === -1 || end === -1) throw new Error('No JSON object found')
-      const parsed = JSON.parse(raw.slice(start, end + 1))
-      suggestions = (parsed.suggestions ?? [])
-        .filter(
-          (s: Suggestion) =>
-            noteIds.has(s.source_note_id) &&
-            noteIds.has(s.target_note_id) &&
-            s.source_note_id !== s.target_note_id &&
-            typeof s.reason === 'string',
-        )
-        .slice(0, 3)
+      suggestions = normalizeSuggestions(parseGeminiJsonObject(raw), noteIds)
     } catch (parseErr) {
       fastify.log.warn({ raw, parseErr: String(parseErr) }, 'Could not parse Gemini response as JSON')
       return reply.internalServerError('Unexpected AI response format')

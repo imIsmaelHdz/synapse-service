@@ -11,6 +11,8 @@
     "db:down": "docker compose down",
     "db:migrate": "docker compose exec -T postgres psql -U synapse -d synapse -f - < db/schema.sql",
     "setup:local": "npm run db:up && sleep 3 && npm run db:migrate",
+    "test": "node --import tsx --test 'test/**/*.test.ts'",
+    "test:watch": "node --import tsx --test --watch 'test/**/*.test.ts'",
     "test:local": "bash scripts/smoke-test.sh"
   },
   "dependencies": {

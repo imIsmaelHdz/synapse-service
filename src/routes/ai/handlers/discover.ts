@@ -2,7 +2,12 @@ import { FastifyInstance } from 'fastify'
 import { cacheDelete, cacheGet, cacheKey, cacheSet } from '../discover-cache'
 import { discoverModel } from '../gemini'
 import { buildDiscoverPrompt, buildDiscoverSinglePrompt } from '../prompt-builders'
-import type { DiscoverItem, DiscoverResult, ExistingItem, ReturnType } from '../types'
+import {
+  parseDiscoverBatchResult,
+  parseGeminiJsonObject,
+  sanitiseDiscoverItem,
+} from '../gemini-json'
+import type { ExistingItem, ReturnType } from '../types'
 
 export function registerDiscoverRoute (fastify: FastifyInstance) {
   /**
@@ -58,12 +63,6 @@ export function registerDiscoverRoute (fastify: FastifyInstance) {
     async (request, reply) => {
       const { title, creator = '', type, existing = [], returnType, forceRefresh = false } = request.body
 
-      const sanitise = (o: Record<string, unknown>): DiscoverItem => ({
-        title:   String(o['title']   ?? ''),
-        creator: String(o['creator'] ?? ''),
-        reason:  String(o['reason']  ?? ''),
-      })
-
       //Single-item mode (deck UI)
       if (returnType) {
         // 1. Check server-side cache — skip when forceRefresh=true (manual refresh)
@@ -96,10 +95,7 @@ export function registerDiscoverRoute (fastify: FastifyInstance) {
         }
 
         try {
-          const start = raw.indexOf('{')
-          const end   = raw.lastIndexOf('}')
-          if (start === -1 || end === -1) throw new Error('No JSON found')
-          const item = sanitise(JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>)
+          const item = sanitiseDiscoverItem(parseGeminiJsonObject(raw))
           // 2. Store in cache before returning
           cacheSet(key, item)
           return item
@@ -128,17 +124,7 @@ export function registerDiscoverRoute (fastify: FastifyInstance) {
 
       try {
         fastify.log.info({ rawLength: raw.length, rawPreview: raw.slice(0, 200) }, 'Gemini /discover raw response')
-        const start = raw.indexOf('{')
-        const end   = raw.lastIndexOf('}')
-        if (start === -1 || end === -1) throw new Error('No JSON object found')
-        const parsed = JSON.parse(raw.slice(start, end + 1))
-
-        const discoverResult: DiscoverResult = {
-          book:  sanitise(parsed['book']  as Record<string, unknown> ?? {}),
-          movie: sanitise(parsed['movie'] as Record<string, unknown> ?? {}),
-          serie: sanitise(parsed['serie'] as Record<string, unknown> ?? {}),
-        }
-        return discoverResult
+        return parseDiscoverBatchResult(parseGeminiJsonObject(raw))
       } catch (parseErr) {
         fastify.log.warn({ raw, parseErr: String(parseErr) }, 'Could not parse /discover response')
         return reply.internalServerError('Unexpected AI response format')

@@ -6,8 +6,8 @@
 export async function getSuggestUsageToday(
   client: any,
   uid: string,
+  today: string = new Date().toISOString().slice(0, 10),
 ): Promise<number> {
-  const today = new Date().toISOString().slice(0, 10)
   try {
     // Upsert the user row first so the FK constraint never fires
     // (new accounts may not have been synced to `users` yet)
@@ -32,8 +32,11 @@ export async function getSuggestUsageToday(
   }
 }
 
-export async function incrementSuggestUsage(client: any, uid: string): Promise<void> {
-  const today = new Date().toISOString().slice(0, 10)
+export async function incrementSuggestUsage (
+  client: any,
+  uid: string,
+  today: string = new Date().toISOString().slice(0, 10),
+): Promise<void> {
   try {
     await client.query(
       `UPDATE ai_usage SET suggest_count = suggest_count + 1

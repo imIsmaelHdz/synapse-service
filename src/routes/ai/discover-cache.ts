@@ -15,8 +15,12 @@ interface DiscoverCacheEntry {
 }
 
 const _discoverCache = new Map<string, DiscoverCacheEntry>()
-const CACHE_TTL_MS   = 24 * 60 * 60 * 1000
-const CACHE_MAX      = 500
+export const CACHE_TTL_MS = 24 * 60 * 60 * 1000
+export const CACHE_MAX    = 500
+
+export function resetDiscoverCache (): void {
+  _discoverCache.clear()
+}
 
 export function cacheKey(title: string, creator: string, sourceType: string, returnType: string): string {
   return [title, creator, sourceType, returnType].map((s) => s.trim().toLowerCase()).join('::')
