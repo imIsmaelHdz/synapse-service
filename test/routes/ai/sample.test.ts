@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Ismael Hernandez
+
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { SAMPLE_SIZE, sampleDiverse } from '../../../src/routes/ai/sample'

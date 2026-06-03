@@ -2,6 +2,8 @@
   "name": "synapse-service",
   "version": "1.0.0",
   "description": "Synapse API — AI suggestions + cloud backup for a local-first knowledge graph",
+  "license": "Apache-2.0",
+  "author": "Ismael Hernandez",
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",

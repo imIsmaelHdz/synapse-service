@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Ismael Hernandez
+
 import type { DiscoverItem, DiscoverResult, Suggestion } from './types'
 
 /** Extracts the outermost JSON object from a Gemini text response. */

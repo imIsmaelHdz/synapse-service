@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Ismael Hernandez
+
 import { FastifyInstance } from 'fastify'
 import { SUGGEST_DAILY_LIMIT } from '../../../config/ai'
 import { suggestModel } from '../gemini'

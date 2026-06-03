@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Ismael Hernandez
+
 /**
  * Returns how many /suggest calls the user has made today (UTC date).
  * Creates the counter row if it doesn't exist yet.

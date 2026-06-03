@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Ismael Hernandez
+
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { loadPrompt } from '../../src/lib/prompt-loader'

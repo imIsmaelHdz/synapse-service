@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Ismael Hernandez
+
 import type { Note } from './types'
 
 export const SAMPLE_SIZE = 10    // notes sent to Gemini per request

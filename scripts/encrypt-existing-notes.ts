@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Ismael Hernandez
+
 /**
  * One-time migration: encrypt plain-text note fields already in PostgreSQL.
  *

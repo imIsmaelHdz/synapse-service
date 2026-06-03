@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Ismael Hernandez
+
 import { FastifyInstance } from 'fastify'
 import { cacheDelete, cacheGet, cacheKey, cacheSet } from '../discover-cache'
 import { discoverModel } from '../gemini'

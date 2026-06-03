@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Ismael Hernandez
+
 import type { Note } from '../../src/routes/ai/types'
 
 export const VALID_ENCRYPTION_KEY = 'a'.repeat(64)

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Ismael Hernandez
+
 import { loadPrompt } from '../../lib/prompt-loader'
 import type { ExistingItem, ExistingLink, Note, ReturnType } from './types'
 import { MAX_CONTENT, SAMPLE_SIZE, sampleDiverse } from './sample'

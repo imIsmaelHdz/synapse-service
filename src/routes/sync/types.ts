@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Ismael Hernandez
+
 // Payload types (mirror Flutter's toMap() output)
 export interface BookPayload {
   id: string
