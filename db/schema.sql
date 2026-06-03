@@ -1,12 +1,10 @@
--- ─────────────────────────────────────────────────────────────────────────────
 -- Synapse — PostgreSQL schema  (local-first, minimal backend)
 -- Run once:  psql $DATABASE_URL -f db/schema.sql
---            or:  npm run db:migrate
--- ─────────────────────────────────────────────────────────────────────────────
+-- or:  npm run db:migrate
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- ── Users ─────────────────────────────────────────────────────────────────────
+-- Users 
 -- id = Firebase UID. Created on first login via POST /v1/users/sync.
 CREATE TABLE IF NOT EXISTS users (
   id           TEXT        PRIMARY KEY,
@@ -15,7 +13,7 @@ CREATE TABLE IF NOT EXISTS users (
   created_at   TIMESTAMPTZ DEFAULT NOW()
 );
 
--- ── Snapshots (legacy — kept for rollback during migration) ───────────────────
+-- Snapshots (legacy — kept for rollback during migration)
 -- New pushes no longer write here; pull falls back here only when the
 -- normalized tables are empty (first push after migration).
 -- Safe to DROP after all users have pushed at least once.
@@ -29,7 +27,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
 CREATE INDEX IF NOT EXISTS idx_snapshots_user_date
   ON snapshots (user_id, created_at DESC);
 
--- ── Books ─────────────────────────────────────────────────────────────────────
+-- Books
 CREATE TABLE IF NOT EXISTS books (
   id          TEXT        PRIMARY KEY,                            -- UUID from Flutter
   user_id     TEXT        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -42,7 +40,7 @@ CREATE TABLE IF NOT EXISTS books (
 
 CREATE INDEX IF NOT EXISTS idx_books_user ON books (user_id);
 
--- ── Notes ─────────────────────────────────────────────────────────────────────
+-- Notes
 CREATE TABLE IF NOT EXISTS notes (
   id         TEXT        PRIMARY KEY,                            -- UUID from Flutter
   user_id    TEXT        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -57,7 +55,7 @@ CREATE TABLE IF NOT EXISTS notes (
 CREATE INDEX IF NOT EXISTS idx_notes_user ON notes (user_id);
 CREATE INDEX IF NOT EXISTS idx_notes_book ON notes (book_id);
 
--- ── Note links ────────────────────────────────────────────────────────────────
+-- Note links
 -- Both wiki-parsed ([[Title]]) and manual connections.
 -- Unique on (user_id, source_id, target_id) — direction matters in the
 -- Flutter model so we keep both orderings if they ever coexist.
@@ -75,7 +73,7 @@ CREATE INDEX IF NOT EXISTS idx_note_links_user   ON note_links (user_id);
 CREATE INDEX IF NOT EXISTS idx_note_links_source ON note_links (source_id);
 CREATE INDEX IF NOT EXISTS idx_note_links_target ON note_links (target_id);
 
--- ── Graph layout ──────────────────────────────────────────────────────────────
+-- Graph layout
 -- Persists force-directed node positions so the graph doesn't re-randomise
 -- across sessions. Positions are in canvas pixels (device-specific) so they
 -- are best-effort across different screen sizes.
@@ -90,7 +88,7 @@ CREATE TABLE IF NOT EXISTS graph_layout (
 
 CREATE INDEX IF NOT EXISTS idx_graph_layout_user ON graph_layout (user_id);
 
--- ── AI usage counters ────────────────────────────────────────────────────────
+-- AI usage counters
 -- Tracks per-user daily AI call counts.
 -- suggest_count: hidden-connection generations used today.
 CREATE TABLE IF NOT EXISTS ai_usage (
@@ -104,7 +102,7 @@ CREATE TABLE IF NOT EXISTS ai_usage (
 -- Run this periodically (e.g. pg_cron) or just let old rows accumulate —
 -- the query always filters by today's date so stale rows are harmless.
 
--- ── One-time data migration ───────────────────────────────────────────────────
+-- One-time data migration
 -- Extracts each user's latest snapshot and populates the normalized tables.
 -- ON CONFLICT DO NOTHING makes this idempotent — safe to re-run.
 -- Run after creating the new tables on an existing database.

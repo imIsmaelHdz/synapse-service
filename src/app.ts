@@ -13,8 +13,6 @@ import syncRoutes   from './routes/sync'
 import aiRoutes     from './routes/ai'
 
 export async function buildApp () {
-  // In production, never allow log level below 'info' — debug/trace logs can
-  // leak request bodies and note content.
   const isProd    = process.env.NODE_ENV === 'production'
   const logLevel  = isProd
     ? 'info'                                        // floor in prod
@@ -29,10 +27,10 @@ export async function buildApp () {
     },
   })
 
-  // ── Security headers ────────────────────────────────────────────────────────
+  // Security headers
   await app.register(helmet)
 
-  // ── CORS ────────────────────────────────────────────────────────────────────
+  // CORS 
   // Only the Flutter mobile app calls this API — it is not a browser client,
   // so CORS is irrelevant for it. Setting origin: false blocks all browser-based
   // cross-origin requests. No legitimate browser client exists right now.
@@ -41,7 +39,7 @@ export async function buildApp () {
     origin: false,
   })
 
-  // ── Rate limiting ────────────────────────────────────────────────────────────
+  // Rate limiting
   // Global: 200 req / minute.
   // Key: user UID when authenticated (avoids shared-IP collateral damage on
   // mobile hotspots), falling back to IP for unauthenticated paths.
@@ -66,10 +64,11 @@ export async function buildApp () {
   await app.register(postgresPlugin)
   await app.register(firebasePlugin)
 
-  // ── Global error handler ────────────────────────────────────────────────────
+  // Global error handler
   // Logs the real error server-side; returns a sanitised response to the client.
   // Prevents raw PostgreSQL error messages (constraint names, table names, etc.)
   // from leaking into API responses in production.
+
   app.setErrorHandler((error, request, reply) => {
     const status = error.statusCode ?? 500
 
@@ -94,7 +93,7 @@ export async function buildApp () {
     })
   })
 
-  // ── Routes ──────────────────────────────────────────────────────────────────
+  // Routes 
   await app.register(healthRoutes)
   await app.register(userRoutes, { prefix: '/v1/users' })
   await app.register(syncRoutes, { prefix: '/v1/sync'  })

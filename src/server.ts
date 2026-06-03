@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import { buildApp } from './app'
 
-// ── Required environment variables ────────────────────────────────────────────
+// Required environment variables
 // Fail fast at boot so Railway surfaces the problem immediately rather than
 // letting the first request trigger a cryptic runtime error.
 function validateEnv () {
@@ -34,7 +34,7 @@ const start = async () => {
 
   const app = await buildApp()
 
-  // ── Graceful shutdown ──────────────────────────────────────────────────────
+  // Graceful shutdown
   // Railway sends SIGTERM before killing the container. Close the server so
   // in-flight sync pushes and AI calls can finish before the process exits.
   const shutdown = async (signal: string) => {

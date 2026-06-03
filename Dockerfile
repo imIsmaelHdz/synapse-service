@@ -1,4 +1,4 @@
-# ── Build stage ───────────────────────────────────────────────────────────────
+# Build stage
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
@@ -7,7 +7,7 @@ COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build
 
-# ── Runtime stage ─────────────────────────────────────────────────────────────
+# Runtime stage
 FROM node:20-alpine
 WORKDIR /app
 

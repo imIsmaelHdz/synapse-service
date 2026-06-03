@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify'
 import admin from 'firebase-admin'
 
-// ── Row type for the users table ──────────────────────────────────────────────
+// Row type for the users table
 interface UserRow {
   id:           string
   email:        string | null
@@ -21,10 +21,10 @@ const userRoutes: FastifyPluginAsync = async (fastify) => {
 
     const { rows } = await fastify.pg.query<UserRow>(
       `INSERT INTO users (id, email, display_name)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (id) DO UPDATE
-         SET email        = EXCLUDED.email,
-             display_name = EXCLUDED.display_name
+        VALUES ($1, $2, $3)
+        ON CONFLICT (id) DO UPDATE
+          SET email        = EXCLUDED.email,
+              display_name = EXCLUDED.display_name
        RETURNING *`,
       [uid, email ?? null, name ?? null],
     )

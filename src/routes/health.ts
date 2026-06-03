@@ -46,7 +46,7 @@ const healthRoutes: FastifyPluginAsync = async (fastify) => {
     },
   }, async (_request, reply) => {
 
-    // ── Database check ────────────────────────────────────────────────────────
+    // Database check
     let dbResponseMs = 0
     try {
       const t0 = Date.now()
@@ -60,7 +60,7 @@ const healthRoutes: FastifyPluginAsync = async (fastify) => {
       })
     }
 
-    // ── Memory ────────────────────────────────────────────────────────────────
+    // Memory
     const mem     = process.memoryUsage()
     const usedMb  = Math.round(mem.rss       / 1024 / 1024)
     const totalMb = Math.round(mem.heapTotal / 1024 / 1024)
