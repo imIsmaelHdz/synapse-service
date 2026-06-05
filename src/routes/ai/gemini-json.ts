@@ -11,6 +11,17 @@ export function parseGeminiJsonObject (raw: string): Record<string, unknown> {
   return JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>
 }
 
+// Strip note ID references like (n1), [n2], N3 from reason text
+function cleanReason(reason: string): string {
+  return reason
+    .replace(/\(n\d+\)/gi, '')      // (n3) → ''
+    .replace(/\[n\d+\]/gi, '')      // [n3] → ''
+    .replace(/\bN\d+\b/g, '')       // N3 → ''
+    .replace(/\bn\d+\b/g, '')       // n3 → ''
+    .replace(/\s{2,}/g, ' ')        // collapse double spaces
+    .trim()
+}
+
 export function normalizeSuggestions (
   parsed: Record<string, unknown>,
   noteIds: Set<string>,
@@ -23,6 +34,7 @@ export function normalizeSuggestions (
         s.source_note_id !== s.target_note_id &&
         typeof s.reason === 'string',
     )
+    .map((s) => ({ ...s, reason: cleanReason(s.reason) }))
     .slice(0, 3)
 }
 

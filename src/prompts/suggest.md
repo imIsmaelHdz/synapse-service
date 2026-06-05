@@ -14,7 +14,7 @@ Guidelines:
 - Prioritise surprising cross-domain connections over obvious same-topic links
 - Every suggestion must include a short "Because:" explanation (1-2 sentences) grounded in the actual note content — no generic filler
 - Write the "reason" field in the same language the notes are written in (detect from the note titles and content)
-- NEVER reference note IDs (like "N1", "N2", "[n1]") in the reason field — use the actual concept names or note titles instead
+- NEVER use note IDs anywhere in the reason field. No "n1", "n2", "(n3)", "[n4]", "N5" — not even in parentheses. Always use the actual note title or concept name instead. For example: write "La geografía como destino" not "(n3)".
 - Return only valid JSON, no extra text
 
 Here are the user's notes:
