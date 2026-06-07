@@ -146,6 +146,81 @@ export function registerPushRoute (fastify: FastifyInstance) {
         )
       }
 
+      // 4. Append to sync_events log
+      // Books — upserts
+      for (const b of books) {
+        await client.query(
+          `INSERT INTO sync_events (uid, entity_type, entity_id, op, payload)
+           VALUES ($1, 'book', $2, 'upsert', $3)`,
+          [uid, b.id, JSON.stringify(b)],
+        )
+      }
+      // Books — deletes (ids present in DB but absent from this push)
+      const { rows: dbBooks } = await client.query<{ id: string }>(
+        `SELECT id FROM books WHERE user_id = $1`, [uid],
+      )
+      const bookIdSet = new Set(books.map(b => b.id))
+      for (const row of dbBooks) {
+        if (!bookIdSet.has(row.id)) {
+          await client.query(
+            `INSERT INTO sync_events (uid, entity_type, entity_id, op)
+             VALUES ($1, 'book', $2, 'delete')`,
+            [uid, row.id],
+          )
+        }
+      }
+
+      // Notes — upserts (store encrypted payload, same as the normalized table)
+      for (const n of notes) {
+        await client.query(
+          `INSERT INTO sync_events (uid, entity_type, entity_id, op, payload)
+           VALUES ($1, 'note', $2, 'upsert', $3)`,
+          [uid, n.id, JSON.stringify({
+            ...n,
+            title: encrypt(n.title),
+            body:  encrypt(n.body ?? ''),
+            topic: encrypt(n.topic ?? ''),
+          })],
+        )
+      }
+      // Notes — deletes
+      const { rows: dbNotes } = await client.query<{ id: string }>(
+        `SELECT id FROM notes WHERE user_id = $1`, [uid],
+      )
+      const noteIdSet = new Set(notes.map(n => n.id))
+      for (const row of dbNotes) {
+        if (!noteIdSet.has(row.id)) {
+          await client.query(
+            `INSERT INTO sync_events (uid, entity_type, entity_id, op)
+             VALUES ($1, 'note', $2, 'delete')`,
+            [uid, row.id],
+          )
+        }
+      }
+
+      // Links — upserts
+      for (const l of links) {
+        await client.query(
+          `INSERT INTO sync_events (uid, entity_type, entity_id, op, payload)
+           VALUES ($1, 'link', $2, 'upsert', $3)`,
+          [uid, l.id, JSON.stringify(l)],
+        )
+      }
+      // Links — deletes (full replace strategy: anything not in this push is gone)
+      const { rows: dbLinks } = await client.query<{ id: string }>(
+        `SELECT id FROM note_links WHERE user_id = $1`, [uid],
+      )
+      const linkIdSet = new Set(links.map(l => l.id))
+      for (const row of dbLinks) {
+        if (!linkIdSet.has(row.id)) {
+          await client.query(
+            `INSERT INTO sync_events (uid, entity_type, entity_id, op)
+             VALUES ($1, 'link', $2, 'delete')`,
+            [uid, row.id],
+          )
+        }
+      }
+
       await client.query('COMMIT')
     } catch (err) {
       await client.query('ROLLBACK')
@@ -154,6 +229,12 @@ export function registerPushRoute (fastify: FastifyInstance) {
       client.release()
     }
 
-    return reply.code(201).send({ saved_at: new Date().toISOString() })
+    // Return the highest seq so clients can store it as their cursor
+    const { rows } = await fastify.pg.query<{ seq: string }>(
+      `SELECT MAX(seq)::text AS seq FROM sync_events WHERE uid = $1`, [uid],
+    )
+    const seq = rows[0]?.seq ? Number(rows[0].seq) : 0
+
+    return reply.code(201).send({ saved_at: new Date().toISOString(), seq })
   })
 }

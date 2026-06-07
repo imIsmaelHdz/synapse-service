@@ -5,13 +5,60 @@ import { FastifyInstance } from 'fastify'
 import { decrypt } from '../../../lib/crypto'
 import type { BookRow, LinkRow, NoteRow, SnapshotRow } from '../types'
 
+interface SyncEventRow {
+  seq:         string   // bigint comes back as string from pg driver
+  entity_type: string
+  entity_id:   string
+  op:          string
+  payload:     unknown
+}
+
 export function registerPullRoute (fastify: FastifyInstance) {
   // PULL
-  // Assembles the graph from normalized tables.
-  // Falls back to the legacy snapshots table for users who haven't pushed yet
-  // after the migration (empty books table = no data migrated yet for this user).
-  fastify.get('/pull', async (request, reply) => {
+  // ?since=0 (default) — full restore from normalized tables (new device / first web load).
+  // ?since=N           — delta: returns only sync_events with seq > N so the
+  //                      client applies just what changed since its last pull.
+  // Falls back to the legacy snapshots table for users who haven't pushed yet.
+  fastify.get<{ Querystring: { since?: string } }>('/pull', async (request, reply) => {
     const { uid } = request.user
+    const since = Number(request.query.since ?? 0)
+
+    // ── Delta path ──────────────────────────────────────────────────────────
+    if (since > 0) {
+      const { rows } = await fastify.pg.query<SyncEventRow>(
+        `SELECT seq, entity_type, entity_id, op, payload
+         FROM   sync_events
+         WHERE  uid = $1 AND seq > $2
+         ORDER  BY seq ASC
+         LIMIT  2000`,
+        [uid, since],
+      )
+
+      const events = rows.map(r => {
+        let payload = r.payload as Record<string, unknown> | null
+        // Decrypt note fields before sending to client
+        if (r.op === 'upsert' && r.entity_type === 'note' && payload) {
+          payload = {
+            ...payload,
+            title: decrypt(payload.title as string),
+            body:  decrypt(payload.body  as string),
+            topic: decrypt(payload.topic as string),
+          }
+        }
+        return {
+          seq:        Number(r.seq),
+          entityType: r.entity_type,
+          entityId:   r.entity_id,
+          op:         r.op,
+          payload:    r.op === 'upsert' ? payload : null,
+        }
+      })
+
+      return {
+        events,
+        next_seq: events.at(-1)?.seq ?? since,
+      }
+    }
 
     // Check if this user has data in the normalized tables
     const { rows: bookRows } = await fastify.pg.query<BookRow>(

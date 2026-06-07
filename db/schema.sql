@@ -102,6 +102,24 @@ CREATE TABLE IF NOT EXISTS ai_usage (
 -- Run this periodically (e.g. pg_cron) or just let old rows accumulate —
 -- the query always filters by today's date so stale rows are harmless.
 
+-- Sync event log
+-- Append-only. One row per entity change per push.
+-- Clients pull delta by passing ?since=<last_seq> — server returns only
+-- events with seq > last_seq, so they receive only what changed.
+-- since=0 (new device / first load) returns all events → full restore.
+CREATE TABLE IF NOT EXISTS sync_events (
+  seq         BIGSERIAL    PRIMARY KEY,
+  uid         TEXT         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  entity_type TEXT         NOT NULL,   -- 'book' | 'note' | 'link'
+  entity_id   TEXT         NOT NULL,
+  op          TEXT         NOT NULL,   -- 'upsert' | 'delete'
+  payload     JSONB,                   -- encrypted entity on upsert, NULL on delete
+  created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_events_uid_seq
+  ON sync_events (uid, seq);
+
 -- One-time data migration
 -- Extracts each user's latest snapshot and populates the normalized tables.
 -- ON CONFLICT DO NOTHING makes this idempotent — safe to re-run.

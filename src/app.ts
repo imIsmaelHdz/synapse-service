@@ -33,13 +33,16 @@ export async function buildApp () {
   // Security headers
   await app.register(helmet)
 
-  // CORS 
-  // Only the Flutter mobile app calls this API — it is not a browser client,
-  // so CORS is irrelevant for it. Setting origin: false blocks all browser-based
-  // cross-origin requests. No legitimate browser client exists right now.
-  // If a web app is ever added, replace false with ['https://thesynapsetool.com'].
+  // CORS
+  // iOS (Flutter) is not a browser client — CORS doesn't apply to it.
+  // The allowlist covers the web app (production + local dev preview).
   await app.register(cors, {
-    origin: false,
+    origin: [
+      'https://thesynapsetool.com',
+      'http://localhost:4322',
+      'http://localhost:3000',
+    ],
+    credentials: true,
   })
 
   // Rate limiting
