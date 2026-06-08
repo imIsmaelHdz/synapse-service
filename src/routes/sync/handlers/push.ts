@@ -66,6 +66,7 @@ export function registerPushRoute (fastify: FastifyInstance) {
                 sourceId:  { type: 'string', maxLength: 100 },
                 targetId:  { type: 'string', maxLength: 100 },
                 isManual:  { type: 'boolean' },
+                reason:    { type: 'string', maxLength: 2000 },
                 createdAt: { type: 'number' },
               },
             },
@@ -139,10 +140,12 @@ export function registerPushRoute (fastify: FastifyInstance) {
 
       for (const l of links) {
         await client.query(
-          `INSERT INTO note_links (id, user_id, source_id, target_id, is_manual, created_at)
-            VALUES ($1, $2, $3, $4, $5, to_timestamp($6 / 1000.0))
-            ON CONFLICT DO NOTHING`,
-          [l.id, uid, l.sourceId, l.targetId, l.isManual ?? false, l.createdAt],
+          `INSERT INTO note_links (id, user_id, source_id, target_id, is_manual, reason, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0))
+            ON CONFLICT (user_id, source_id, target_id) DO UPDATE SET
+            is_manual = EXCLUDED.is_manual,
+            reason    = EXCLUDED.reason`,
+          [l.id, uid, l.sourceId, l.targetId, l.isManual ?? false, l.reason ?? null, l.createdAt],
         )
       }
 
@@ -198,12 +201,19 @@ export function registerPushRoute (fastify: FastifyInstance) {
         }
       }
 
-      // Links — upserts
+      // Links — upserts (include reason so delta clients preserve it)
       for (const l of links) {
         await client.query(
           `INSERT INTO sync_events (uid, entity_type, entity_id, op, payload)
            VALUES ($1, 'link', $2, 'upsert', $3)`,
-          [uid, l.id, JSON.stringify(l)],
+          [uid, l.id, JSON.stringify({
+            id:        l.id,
+            sourceId:  l.sourceId,
+            targetId:  l.targetId,
+            isManual:  l.isManual ?? false,
+            reason:    l.reason ?? null,
+            createdAt: l.createdAt,
+          })],
         )
       }
       // Links — deletes (full replace strategy: anything not in this push is gone)

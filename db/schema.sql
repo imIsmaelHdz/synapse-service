@@ -65,9 +65,13 @@ CREATE TABLE IF NOT EXISTS note_links (
   source_id  TEXT        NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
   target_id  TEXT        NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
   is_manual  BOOLEAN     NOT NULL DEFAULT false,
+  reason     TEXT,                                              -- manual link explanation
   created_at TIMESTAMPTZ NOT NULL,
   UNIQUE (user_id, source_id, target_id)
 );
+
+-- Migration: add reason column if upgrading from a schema without it
+ALTER TABLE note_links ADD COLUMN IF NOT EXISTS reason TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_note_links_user   ON note_links (user_id);
 CREATE INDEX IF NOT EXISTS idx_note_links_source ON note_links (source_id);

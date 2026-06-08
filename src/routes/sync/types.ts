@@ -26,6 +26,7 @@ export interface LinkPayload {
   sourceId: string
   targetId: string
   isManual: boolean
+  reason?: string   // manual link explanation — optional, plain text
   createdAt: number
 }
 
@@ -70,6 +71,7 @@ export interface LinkRow {
   source_id:  string
   target_id:  string
   is_manual:  boolean
+  reason:     string | null
   created_at: string
 }
 

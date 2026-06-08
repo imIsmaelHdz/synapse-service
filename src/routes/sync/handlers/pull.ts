@@ -98,7 +98,7 @@ export function registerPullRoute (fastify: FastifyInstance) {
     )
 
     const { rows: linkRows } = await fastify.pg.query<LinkRow>(
-      `SELECT id, source_id, target_id, is_manual,
+      `SELECT id, source_id, target_id, is_manual, reason,
               round(extract(epoch from created_at) * 1000)::bigint AS created_at
         FROM   note_links
         WHERE  user_id = $1`,
@@ -130,6 +130,7 @@ export function registerPullRoute (fastify: FastifyInstance) {
           sourceId: r.source_id,
           targetId: r.target_id,
           isManual: r.is_manual,
+          reason:   r.reason ?? undefined,
           createdAt: Number(r.created_at),
         })),
         exported_at: new Date().toISOString(),
