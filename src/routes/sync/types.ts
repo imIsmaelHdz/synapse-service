@@ -8,6 +8,7 @@ export interface BookPayload {
   author: string
   colorIndex: number
   createdAt: number   // milliseconds since epoch
+  updatedAt?: number  // ms since epoch — drives last-write-wins; older clients omit it
   type: string
 }
 
@@ -28,6 +29,7 @@ export interface LinkPayload {
   isManual: boolean
   reason?: string   // manual link explanation — optional, plain text
   createdAt: number
+  updatedAt?: number  // ms since epoch — drives last-write-wins; older clients omit it
 }
 
 export interface PushBody {
@@ -35,6 +37,12 @@ export interface PushBody {
   notes: NotePayload[]
   links: LinkPayload[]
   exported_at: string
+  // Explicit tombstones — ids the device deleted since its last sync.
+  // When present, the server deletes exactly these (delta mode) instead of
+  // inferring deletes from absence. Older clients omit them.
+  deletedBookIds?: string[]
+  deletedNoteIds?: string[]
+  deletedLinkIds?: string[]
 }
 
 export interface LayoutPoint {
@@ -54,6 +62,7 @@ export interface BookRow {
   color_index: number
   type:        string
   created_at:  string  // bigint epoch ms returned as string by pg driver
+  updated_at:  string
 }
 
 export interface NoteRow {
@@ -73,6 +82,7 @@ export interface LinkRow {
   is_manual:  boolean
   reason:     string | null
   created_at: string
+  updated_at: string
 }
 
 export interface SnapshotRow {

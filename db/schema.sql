@@ -35,10 +35,17 @@ CREATE TABLE IF NOT EXISTS books (
   author      TEXT        NOT NULL DEFAULT '',
   color_index INT         NOT NULL DEFAULT 0,
   type        TEXT        NOT NULL DEFAULT 'book',
-  created_at  TIMESTAMPTZ NOT NULL
+  created_at  TIMESTAMPTZ NOT NULL,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_books_user ON books (user_id);
+
+-- Migration: add updated_at for last-write-wins (backfill existing rows from created_at)
+ALTER TABLE books ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+UPDATE books SET updated_at = created_at WHERE updated_at IS NULL;
+ALTER TABLE books ALTER COLUMN updated_at SET NOT NULL;
+ALTER TABLE books ALTER COLUMN updated_at SET DEFAULT NOW();
 
 -- Notes
 CREATE TABLE IF NOT EXISTS notes (
@@ -67,11 +74,18 @@ CREATE TABLE IF NOT EXISTS note_links (
   is_manual  BOOLEAN     NOT NULL DEFAULT false,
   reason     TEXT,                                              -- manual link explanation
   created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (user_id, source_id, target_id)
 );
 
 -- Migration: add reason column if upgrading from a schema without it
 ALTER TABLE note_links ADD COLUMN IF NOT EXISTS reason TEXT;
+
+-- Migration: add updated_at for last-write-wins (backfill existing rows from created_at)
+ALTER TABLE note_links ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+UPDATE note_links SET updated_at = created_at WHERE updated_at IS NULL;
+ALTER TABLE note_links ALTER COLUMN updated_at SET NOT NULL;
+ALTER TABLE note_links ALTER COLUMN updated_at SET DEFAULT NOW();
 
 CREATE INDEX IF NOT EXISTS idx_note_links_user   ON note_links (user_id);
 CREATE INDEX IF NOT EXISTS idx_note_links_source ON note_links (source_id);

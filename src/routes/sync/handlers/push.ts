@@ -7,9 +7,19 @@ import type { PushBody } from '../types'
 
 export function registerPushRoute (fastify: FastifyInstance) {
   /**
-   * PUSH
-   * Upserts books → notes → note_links in a single transaction.
-   * Rows that no longer exist in the payload are deleted (device is source of truth).
+   * PUSH (delta + last-write-wins)
+   *
+   * Upserts the books / notes / links the device changed since its last sync,
+   * and deletes exactly the ids listed in deletedBookIds / deletedNoteIds /
+   * deletedLinkIds. Rows the payload does NOT mention are left untouched — the
+   * server is a merge target, never overwritten wholesale. This makes multi-
+   * device sync lossless: a device can only ever delete what it explicitly
+   * tombstoned, never what it simply hasn't heard about yet.
+   *
+   * Conflicts resolve by updatedAt (last-write-wins): an upsert carrying an
+   * older updatedAt than the stored row is ignored, and no sync_event is
+   * emitted for it, so stale data never propagates to other devices.
+   *
    * graph_layout is intentionally NOT touched here — positions are separate.
    */
   fastify.post<{ Body: PushBody }>('/push', {
@@ -33,6 +43,7 @@ export function registerPushRoute (fastify: FastifyInstance) {
                 colorIndex: { type: 'integer', minimum: 0, maximum: 11 },
                 type:       { type: 'string', maxLength: 50 },
                 createdAt:  { type: 'number' },
+                updatedAt:  { type: 'number' },
               },
             },
           },
@@ -68,45 +79,58 @@ export function registerPushRoute (fastify: FastifyInstance) {
                 isManual:  { type: 'boolean' },
                 reason:    { type: 'string', maxLength: 2000 },
                 createdAt: { type: 'number' },
+                updatedAt: { type: 'number' },
               },
             },
           },
-          exported_at: { type: 'string', maxLength: 50 },
+          exported_at:    { type: 'string', maxLength: 50 },
+          deletedBookIds: { type: 'array', maxItems: 5000, items: { type: 'string', maxLength: 100 } },
+          deletedNoteIds: { type: 'array', maxItems: 5000, items: { type: 'string', maxLength: 100 } },
+          deletedLinkIds: { type: 'array', maxItems: 10000, items: { type: 'string', maxLength: 100 } },
         },
       },
     },
   }, async (request, reply) => {
     const { uid } = request.user
     const { books, notes, links } = request.body
+    const deletedBookIds = request.body.deletedBookIds ?? []
+    const deletedNoteIds = request.body.deletedNoteIds ?? []
+    const deletedLinkIds = request.body.deletedLinkIds ?? []
 
     const client = await fastify.pg.connect()
     try {
       await client.query('BEGIN')
 
-      // 1. Upsert books
+      // ── 1. Books — upsert with last-write-wins ──────────────────────────
+      // updatedAt falls back to createdAt for older clients that don't send it.
       for (const b of books) {
-        await client.query(
-          `INSERT INTO books (id, user_id, title, author, color_index, type, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0))
+        const updatedAt = b.updatedAt ?? b.createdAt
+        const { rowCount } = await client.query(
+          `INSERT INTO books (id, user_id, title, author, color_index, type, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0), to_timestamp($8 / 1000.0))
             ON CONFLICT (id) DO UPDATE SET
             title       = EXCLUDED.title,
             author      = EXCLUDED.author,
             color_index = EXCLUDED.color_index,
-            type        = EXCLUDED.type`,
-          [b.id, uid, b.title, b.author ?? '', b.colorIndex ?? 0, b.type ?? 'book', b.createdAt],
+            type        = EXCLUDED.type,
+            updated_at  = EXCLUDED.updated_at
+            WHERE books.updated_at < EXCLUDED.updated_at
+            RETURNING id`,
+          [b.id, uid, b.title, b.author ?? '', b.colorIndex ?? 0, b.type ?? 'book', b.createdAt, updatedAt],
         )
+        // Only log a sync_event when the write actually landed (newer than stored).
+        if (rowCount && rowCount > 0) {
+          await client.query(
+            `INSERT INTO sync_events (uid, entity_type, entity_id, op, payload)
+             VALUES ($1, 'book', $2, 'upsert', $3)`,
+            [uid, b.id, JSON.stringify({ ...b, updatedAt })],
+          )
+        }
       }
 
-      // Delete books that no longer exist on the device (cascades → notes → links / layout)
-      const bookIds = books.map(b => b.id)
-      await client.query(
-        `DELETE FROM books WHERE user_id = $1 AND id != ALL($2::text[])`,
-        [uid, bookIds],
-      )
-
-      // 2. Upsert notes — title, body, and topic are encrypted at rest
+      // ── 2. Notes — upsert with last-write-wins (title/body/topic encrypted)
       for (const n of notes) {
-        await client.query(
+        const { rowCount } = await client.query(
           `INSERT INTO notes (id, user_id, title, body, book_id, topic, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0), to_timestamp($8 / 1000.0))
             ON CONFLICT (id) DO UPDATE SET
@@ -114,7 +138,9 @@ export function registerPushRoute (fastify: FastifyInstance) {
             body       = EXCLUDED.body,
             book_id    = EXCLUDED.book_id,
             topic      = EXCLUDED.topic,
-            updated_at = EXCLUDED.updated_at`,
+            updated_at = EXCLUDED.updated_at
+            WHERE notes.updated_at < EXCLUDED.updated_at
+            RETURNING id`,
           [
             n.id, uid,
             encrypt(n.title),
@@ -124,109 +150,87 @@ export function registerPushRoute (fastify: FastifyInstance) {
             n.createdAt, n.updatedAt,
           ],
         )
+        if (rowCount && rowCount > 0) {
+          await client.query(
+            `INSERT INTO sync_events (uid, entity_type, entity_id, op, payload)
+             VALUES ($1, 'note', $2, 'upsert', $3)`,
+            [uid, n.id, JSON.stringify({
+              ...n,
+              title: encrypt(n.title),
+              body:  encrypt(n.body ?? ''),
+              topic: encrypt(n.topic ?? ''),
+            })],
+          )
+        }
       }
 
-      // Delete notes that no longer exist (cascades → note_links + graph_layout for those notes)
-      const noteIds = notes.map(n => n.id)
-      await client.query(
-        `DELETE FROM notes WHERE user_id = $1 AND id != ALL($2::text[])`,
-        [uid, noteIds],
-      )
-
-      // 3. Replace note_links
-      // Links are fully managed by the Flutter app (wiki + manual).
-      // Simplest correct strategy: delete all and reinsert the current set.
-      await client.query(`DELETE FROM note_links WHERE user_id = $1`, [uid])
-
+      // ── 3. Links — upsert with last-write-wins ──────────────────────────
       for (const l of links) {
-        await client.query(
-          `INSERT INTO note_links (id, user_id, source_id, target_id, is_manual, reason, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0))
+        const updatedAt = l.updatedAt ?? l.createdAt
+        const { rowCount } = await client.query(
+          `INSERT INTO note_links (id, user_id, source_id, target_id, is_manual, reason, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0), to_timestamp($8 / 1000.0))
             ON CONFLICT (user_id, source_id, target_id) DO UPDATE SET
-            is_manual = EXCLUDED.is_manual,
-            reason    = EXCLUDED.reason`,
-          [l.id, uid, l.sourceId, l.targetId, l.isManual ?? false, l.reason ?? null, l.createdAt],
+            is_manual  = EXCLUDED.is_manual,
+            reason     = EXCLUDED.reason,
+            updated_at = EXCLUDED.updated_at
+            WHERE note_links.updated_at < EXCLUDED.updated_at
+            RETURNING id`,
+          [l.id, uid, l.sourceId, l.targetId, l.isManual ?? false, l.reason ?? null, l.createdAt, updatedAt],
         )
+        if (rowCount && rowCount > 0) {
+          await client.query(
+            `INSERT INTO sync_events (uid, entity_type, entity_id, op, payload)
+             VALUES ($1, 'link', $2, 'upsert', $3)`,
+            [uid, l.id, JSON.stringify({
+              id:        l.id,
+              sourceId:  l.sourceId,
+              targetId:  l.targetId,
+              isManual:  l.isManual ?? false,
+              reason:    l.reason ?? null,
+              createdAt: l.createdAt,
+              updatedAt,
+            })],
+          )
+        }
       }
 
-      // 4. Append to sync_events log
-      // Books — upserts
-      for (const b of books) {
-        await client.query(
-          `INSERT INTO sync_events (uid, entity_type, entity_id, op, payload)
-           VALUES ($1, 'book', $2, 'upsert', $3)`,
-          [uid, b.id, JSON.stringify(b)],
+      // ── 4. Explicit deletes (tombstones) ────────────────────────────────
+      // Delete exactly what the device tombstoned — never inferred from absence.
+      // A book delete cascades to its notes; a note delete cascades to its links.
+      for (const id of deletedBookIds) {
+        const { rowCount } = await client.query(
+          `DELETE FROM books WHERE user_id = $1 AND id = $2`, [uid, id],
         )
-      }
-      // Books — deletes (ids present in DB but absent from this push)
-      const { rows: dbBooks } = await client.query<{ id: string }>(
-        `SELECT id FROM books WHERE user_id = $1`, [uid],
-      )
-      const bookIdSet = new Set(books.map(b => b.id))
-      for (const row of dbBooks) {
-        if (!bookIdSet.has(row.id)) {
+        if (rowCount && rowCount > 0) {
           await client.query(
             `INSERT INTO sync_events (uid, entity_type, entity_id, op)
              VALUES ($1, 'book', $2, 'delete')`,
-            [uid, row.id],
+            [uid, id],
           )
         }
       }
-
-      // Notes — upserts (store encrypted payload, same as the normalized table)
-      for (const n of notes) {
-        await client.query(
-          `INSERT INTO sync_events (uid, entity_type, entity_id, op, payload)
-           VALUES ($1, 'note', $2, 'upsert', $3)`,
-          [uid, n.id, JSON.stringify({
-            ...n,
-            title: encrypt(n.title),
-            body:  encrypt(n.body ?? ''),
-            topic: encrypt(n.topic ?? ''),
-          })],
+      for (const id of deletedNoteIds) {
+        const { rowCount } = await client.query(
+          `DELETE FROM notes WHERE user_id = $1 AND id = $2`, [uid, id],
         )
-      }
-      // Notes — deletes
-      const { rows: dbNotes } = await client.query<{ id: string }>(
-        `SELECT id FROM notes WHERE user_id = $1`, [uid],
-      )
-      const noteIdSet = new Set(notes.map(n => n.id))
-      for (const row of dbNotes) {
-        if (!noteIdSet.has(row.id)) {
+        if (rowCount && rowCount > 0) {
           await client.query(
             `INSERT INTO sync_events (uid, entity_type, entity_id, op)
              VALUES ($1, 'note', $2, 'delete')`,
-            [uid, row.id],
+            [uid, id],
           )
         }
       }
-
-      // Links — upserts (include reason so delta clients preserve it)
-      for (const l of links) {
-        await client.query(
-          `INSERT INTO sync_events (uid, entity_type, entity_id, op, payload)
-           VALUES ($1, 'link', $2, 'upsert', $3)`,
-          [uid, l.id, JSON.stringify({
-            id:        l.id,
-            sourceId:  l.sourceId,
-            targetId:  l.targetId,
-            isManual:  l.isManual ?? false,
-            reason:    l.reason ?? null,
-            createdAt: l.createdAt,
-          })],
+      for (const id of deletedLinkIds) {
+        const { rowCount } = await client.query(
+          `DELETE FROM note_links WHERE user_id = $1 AND id = $2`, [uid, id],
         )
-      }
-      // Links — deletes (full replace strategy: anything not in this push is gone)
-      const { rows: dbLinks } = await client.query<{ id: string }>(
-        `SELECT id FROM note_links WHERE user_id = $1`, [uid],
-      )
-      const linkIdSet = new Set(links.map(l => l.id))
-      for (const row of dbLinks) {
-        if (!linkIdSet.has(row.id)) {
+        if (rowCount && rowCount > 0) {
           await client.query(
             `INSERT INTO sync_events (uid, entity_type, entity_id, op)
              VALUES ($1, 'link', $2, 'delete')`,
-            [uid, row.id],
+            [uid, id],
           )
         }
       }

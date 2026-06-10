@@ -63,7 +63,8 @@ export function registerPullRoute (fastify: FastifyInstance) {
     // Check if this user has data in the normalized tables
     const { rows: bookRows } = await fastify.pg.query<BookRow>(
       `SELECT id, title, author, color_index, type,
-              round(extract(epoch from created_at) * 1000)::bigint AS created_at
+              round(extract(epoch from created_at) * 1000)::bigint AS created_at,
+              round(extract(epoch from updated_at) * 1000)::bigint AS updated_at
         FROM   books
         WHERE  user_id = $1`,
       [uid],
@@ -99,7 +100,8 @@ export function registerPullRoute (fastify: FastifyInstance) {
 
     const { rows: linkRows } = await fastify.pg.query<LinkRow>(
       `SELECT id, source_id, target_id, is_manual, reason,
-              round(extract(epoch from created_at) * 1000)::bigint AS created_at
+              round(extract(epoch from created_at) * 1000)::bigint AS created_at,
+              round(extract(epoch from updated_at) * 1000)::bigint AS updated_at
         FROM   note_links
         WHERE  user_id = $1`,
       [uid],
@@ -115,6 +117,7 @@ export function registerPullRoute (fastify: FastifyInstance) {
           colorIndex: r.color_index,
           type: r.type,
           createdAt: Number(r.created_at),
+          updatedAt: Number(r.updated_at),
         })),
         notes: noteRows.map(r => ({
           id: r.id,
@@ -132,6 +135,7 @@ export function registerPullRoute (fastify: FastifyInstance) {
           isManual: r.is_manual,
           reason:   r.reason ?? undefined,
           createdAt: Number(r.created_at),
+          updatedAt: Number(r.updated_at),
         })),
         exported_at: new Date().toISOString(),
       },
