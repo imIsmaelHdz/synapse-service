@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Ismael Hernandez
 
-import { FastifyPluginAsync } from 'fastify'
+import { FastifyPluginAsync, FastifyInstance } from 'fastify'
 import admin from 'firebase-admin'
+import { addToWelcomeList, brevoConfigured } from '../lib/brevo'
 
 // Row type for the users table
 interface UserRow {
@@ -31,6 +32,19 @@ const userRoutes: FastifyPluginAsync = async (fastify) => {
        RETURNING *`,
       [uid, email ?? null, name ?? null],
     )
+
+    // First-sign-up welcome: claim it atomically so concurrent /sync calls
+    // (or a returning user) can't trigger it twice, then add the contact to the
+    // Brevo welcome list off the response path.
+    if (email && brevoConfigured()) {
+      const claim = await fastify.pg.query(
+        `UPDATE users SET welcomed_at = now()
+          WHERE id = $1 AND welcomed_at IS NULL AND email IS NOT NULL
+        RETURNING id`,
+        [uid],
+      )
+      if (claim.rowCount === 1) void sendWelcome(fastify, uid, email, name ?? null)
+    }
 
     return reply.code(201).send(rows[0])
   })
@@ -67,6 +81,28 @@ const userRoutes: FastifyPluginAsync = async (fastify) => {
     return reply.code(204).send()
   })
 
+}
+
+/**
+ * Adds the freshly-signed-up user to the Brevo welcome list (a Brevo automation
+ * on that list sends the email). Runs off the request path. If Brevo fails we
+ * release the claim (welcomed_at → NULL) so the next /users/sync retries.
+ */
+async function sendWelcome (
+  fastify: FastifyInstance,
+  uid: string,
+  email: string,
+  name: string | null,
+): Promise<void> {
+  try {
+    await addToWelcomeList(email, name)
+    fastify.log.info({ uid }, 'welcome: user added to Brevo list')
+  } catch (err) {
+    fastify.log.error({ uid, err }, 'welcome: Brevo failed — releasing claim for retry')
+    await fastify.pg
+      .query(`UPDATE users SET welcomed_at = NULL WHERE id = $1`, [uid])
+      .catch(() => { /* best-effort; will simply not retry if this also fails */ })
+  }
 }
 
 export default userRoutes

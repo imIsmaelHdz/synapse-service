@@ -10,8 +10,12 @@ CREATE TABLE IF NOT EXISTS users (
   id           TEXT        PRIMARY KEY,
   email        TEXT,
   display_name TEXT,
-  created_at   TIMESTAMPTZ DEFAULT NOW()
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  welcomed_at  TIMESTAMPTZ                       -- set once the first-sign-up welcome fires
 );
+
+-- Backfill for existing deploys (idempotent)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS welcomed_at TIMESTAMPTZ;
 
 -- Snapshots (legacy — kept for rollback during migration)
 -- New pushes no longer write here; pull falls back here only when the
