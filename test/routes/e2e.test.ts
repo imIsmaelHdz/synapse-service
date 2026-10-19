@@ -27,6 +27,7 @@ import blobsPlugin from '../../src/plugins/blobs'
 import { MemoryBlobStore } from '../../src/lib/blob-store'
 import syncRoutes from '../../src/routes/sync'
 import attachmentRoutes from '../../src/routes/attachments'
+import e2eRoutes from '../../src/routes/e2e'
 import { VALID_ENCRYPTION_KEY } from '../helpers/fixtures'
 
 const DB = process.env.TEST_DATABASE_URL
@@ -124,6 +125,7 @@ describe('end-to-end encryption (integration)', { skip: !DB && 'TEST_DATABASE_UR
     })
     await app.register(syncRoutes, { prefix: '/v1/sync' })
     await app.register(attachmentRoutes, { prefix: '/v1/attachments' })
+    await app.register(e2eRoutes, { prefix: '/v1/e2e' })
     await app.ready()
   })
 
@@ -181,6 +183,99 @@ describe('end-to-end encryption (integration)', { skip: !DB && 'TEST_DATABASE_UR
   it('rejects a malformed wrapped key', async () => {
     await push(E2E_USER, fixture.push)
     assert.equal((await upload(E2E_USER, sealedBytes, 'not-a-key')).statusCode, 400)
+  })
+
+  // ── Phase 4: turning E2E on for an existing (legacy) account ──────────────
+  const status = async (uid: string) => (await app.inject({
+    method: 'GET', url: '/v1/e2e/status', headers: { 'x-test-uid': uid },
+  })).json()
+  const enable = (uid: string, keyCheck: string) => app.inject({
+    method: 'POST', url: '/v1/e2e/enable', headers: { 'x-test-uid': uid },
+    payload: { keyCheck },
+  })
+  const keyCheck = fixture.push.notes[1].topic // any well-formed e2e:v1 value
+
+  it('status counts what is still readable by the server', async () => {
+    await push(PLAIN_USER, fixture.plaintext)
+    await upload(PLAIN_USER, Buffer.from(file.plainBase64, 'base64'))
+    const s = await status(PLAIN_USER)
+    assert.equal(s.enabled, false)
+    assert.deepEqual(s.pending, { notes: 2, books: 1, links: 1, attachments: 1, files: 1 })
+  })
+
+  it('refuses to enable while anything is pending', async () => {
+    await push(PLAIN_USER, fixture.plaintext)
+    const res = await enable(PLAIN_USER, keyCheck)
+    assert.equal(res.statusCode, 409)
+    assert.equal(res.json().pending.notes, 2)
+    assert.equal((await status(PLAIN_USER)).enabled, false)
+  })
+
+  it('migrates a legacy account: re-push, re-upload, enable, clean event log', async () => {
+    // Before: plaintext data and a server-enveloped file, plus a legacy snapshot.
+    await push(PLAIN_USER, fixture.plaintext)
+    await upload(PLAIN_USER, Buffer.from(file.plainBase64, 'base64'))
+    await app.pg.query(`INSERT INTO snapshots (user_id, payload) VALUES ($1, $2)`,
+      [PLAIN_USER, JSON.stringify({ notes: [{ body: MARKER }] })])
+
+    // The app re-pushes everything sealed (newer updatedAt wins) …
+    const bump = (list: any[]) => list.map(e => ({ ...e, updatedAt: e.updatedAt + 1000 }))
+    const resealed = {
+      ...fixture.push,
+      books: bump(fixture.push.books), notes: bump(fixture.push.notes),
+      links: bump(fixture.push.links), attachments: bump(fixture.push.attachments),
+    }
+    assert.equal((await push(PLAIN_USER, resealed)).statusCode, 201)
+    // … and re-uploads the file sealed, replacing the enveloped one.
+    assert.equal((await upload(PLAIN_USER, sealedBytes, file.wrappedKey)).statusCode, 201)
+    const obj = store.objects.get(`u/${PLAIN_USER}/att/${file.id}`)!
+    assert.deepEqual(obj, sealedBytes)
+    const { rows: q } = await app.pg.query(`SELECT used_bytes FROM user_storage WHERE user_id = $1`, [PLAIN_USER])
+    assert.equal(Number(q[0].used_bytes), sealedBytes.length)
+
+    assert.deepEqual((await status(PLAIN_USER)).pending,
+      { notes: 0, books: 0, links: 0, attachments: 0, files: 0 })
+    const res = await enable(PLAIN_USER, keyCheck)
+    assert.equal(res.statusCode, 200)
+    assert.ok(res.json().seq > 0)
+
+    const s = await status(PLAIN_USER)
+    assert.equal(s.enabled, true)
+    assert.equal(s.keyCheck, keyCheck)
+    // Old event payloads (server-readable) and snapshots are gone.
+    assert.equal((await storedText(PLAIN_USER)).includes(MARKER), false)
+    const { rows: snaps } = await app.pg.query(`SELECT 1 FROM snapshots WHERE user_id = $1`, [PLAIN_USER])
+    assert.equal(snaps.length, 0)
+    // The rebuilt log gives a second device everything, sealed.
+    const delta = await pull(PLAIN_USER, 1)
+    const note = delta.events.find((e: any) => e.entityId === 'note-e2e-1').payload
+    assert.equal(open(note.body, 'note', 'note-e2e-1', 'body'), fixture.plaintext.notes[0].body)
+    assert.equal(delta.events.filter((e: any) => e.entityType === 'attachment').length, 1)
+    // From now on plaintext is refused.
+    assert.equal((await push(PLAIN_USER, fixture.plaintext)).statusCode, 400)
+  })
+
+  it('a sealed re-push replaces readable rows of the same version', async () => {
+    await push(PLAIN_USER, fixture.plaintext)
+    // Same updatedAt as the plaintext push: what the app sends when E2E turns on.
+    assert.equal((await push(PLAIN_USER, fixture.push)).statusCode, 201)
+    assert.deepEqual((await status(PLAIN_USER)).pending,
+      { notes: 0, books: 0, links: 0, attachments: 0, files: 0 })
+    // But it never lets an older or equal plaintext write replace sealed data.
+    await push(PLAIN_USER, fixture.plaintext)
+    const { rows } = await app.pg.query(`SELECT body FROM notes WHERE id = 'note-e2e-1'`)
+    assert.equal(rows[0].body, fixture.push.notes[0].body)
+  })
+
+  it('never replaces the key of an account that is already encrypted', async () => {
+    // E2E_USER starts enabled; a fresh device must unlock, not re-enable.
+    const res = await enable(E2E_USER, keyCheck)
+    assert.equal(res.statusCode, 409)
+    assert.equal(res.json().alreadyEnabled, true)
+  })
+
+  it('rejects a malformed key check', async () => {
+    assert.equal((await enable(E2E_USER, 'nope')).statusCode, 400)
   })
 
   it('legacy uploads still get the server envelope', async () => {

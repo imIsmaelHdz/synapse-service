@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS users (
 ALTER TABLE users ADD COLUMN IF NOT EXISTS welcomed_at TIMESTAMPTZ;
 -- End-to-end encryption: once true, protected fields must arrive sealed (src/lib/e2e.ts).
 ALTER TABLE users ADD COLUMN IF NOT EXISTS e2e_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS e2e_key_check TEXT;
 
 -- Snapshots (legacy — kept for rollback during migration)
 -- New pushes no longer write here; pull falls back here only when the

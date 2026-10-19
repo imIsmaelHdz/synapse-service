@@ -17,6 +17,7 @@ import userRoutes   from './routes/users'
 import syncRoutes   from './routes/sync'
 import aiRoutes     from './routes/ai'
 import attachmentRoutes from './routes/attachments'
+import e2eRoutes from './routes/e2e'
 
 export async function buildApp (opts: { blobs?: BlobStore | null } = {}) {
   const isProd    = process.env.NODE_ENV === 'production'
@@ -109,6 +110,7 @@ export async function buildApp (opts: { blobs?: BlobStore | null } = {}) {
   await app.register(syncRoutes, { prefix: '/v1/sync'  })
   await app.register(aiRoutes,   { prefix: '/v1/ai'    })
   await app.register(attachmentRoutes, { prefix: '/v1/attachments' })
+  await app.register(e2eRoutes, { prefix: '/v1/e2e' })
 
   return app
 }

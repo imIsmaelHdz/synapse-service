@@ -7,6 +7,16 @@ import { deleteAttachments } from '../../../lib/attachments'
 import { ATTACHMENT_ID_PATTERN, MAX_ATTACHMENT_BYTES } from '../../attachments'
 import type { PushBody } from '../types'
 
+/**
+ * Turning E2E on re-pushes every entity sealed but with its existing
+ * updatedAt, which plain last-write-wins would ignore as "not newer". Let a
+ * sealed value replace a server-readable one of the same version.
+ */
+const SEALS_SAME_VERSION = (stored: string, incoming: string) => `
+  OR (${stored.split('.')[0]}.updated_at = EXCLUDED.updated_at
+      AND ${stored} IS NOT NULL AND ${stored} NOT LIKE 'e2e:v1:%'
+      AND ${incoming} LIKE 'e2e:v1:%')`
+
 export function registerPushRoute (fastify: FastifyInstance) {
   /**
    * PUSH (delta + last-write-wins)
@@ -154,6 +164,7 @@ export function registerPushRoute (fastify: FastifyInstance) {
             cover_color = EXCLUDED.cover_color,
             updated_at  = EXCLUDED.updated_at
             WHERE books.updated_at < EXCLUDED.updated_at
+               ${SEALS_SAME_VERSION('books.title', 'EXCLUDED.title')}
             RETURNING id`,
           [b.id, uid, b.title, b.author ?? '', b.colorIndex ?? 0, b.type ?? 'book', b.createdAt, updatedAt,
             b.coverUrl ?? null, b.coverColor ?? null],
@@ -182,6 +193,7 @@ export function registerPushRoute (fastify: FastifyInstance) {
             topic      = EXCLUDED.topic,
             updated_at = EXCLUDED.updated_at
             WHERE notes.updated_at < EXCLUDED.updated_at
+               ${SEALS_SAME_VERSION('notes.title', 'EXCLUDED.title')}
             RETURNING id`,
           [
             n.id, uid,
@@ -217,6 +229,7 @@ export function registerPushRoute (fastify: FastifyInstance) {
             reason     = EXCLUDED.reason,
             updated_at = EXCLUDED.updated_at
             WHERE note_links.updated_at < EXCLUDED.updated_at
+               ${SEALS_SAME_VERSION('note_links.reason', 'EXCLUDED.reason')}
             RETURNING id`,
           [l.id, uid, l.sourceId, l.targetId, l.isManual ?? false, l.reason ?? null, l.createdAt, updatedAt],
         )
@@ -252,7 +265,8 @@ export function registerPushRoute (fastify: FastifyInstance) {
             height     = EXCLUDED.height,
             updated_at = EXCLUDED.updated_at
             WHERE attachments.user_id = EXCLUDED.user_id
-              AND attachments.updated_at < EXCLUDED.updated_at
+              AND (attachments.updated_at < EXCLUDED.updated_at
+               ${SEALS_SAME_VERSION('attachments.file_name', 'EXCLUDED.file_name')})
             RETURNING id`,
           [a.id, uid, a.noteId, a.kind, fileName, a.ext, a.mime, a.bytes,
             a.width ?? null, a.height ?? null, a.createdAt, a.updatedAt],

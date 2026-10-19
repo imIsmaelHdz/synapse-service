@@ -89,8 +89,10 @@ const attachmentRoutes: FastifyPluginAsync = async (fastify) => {
     const client = await fastify.pg.connect()
     try {
       await client.query('BEGIN')
-      const { rows } = await client.query<{ uploaded: boolean, e2e_enabled: boolean }>(
-        `SELECT a.uploaded, u.e2e_enabled
+      const { rows } = await client.query<{
+        uploaded: boolean, e2e_enabled: boolean, client_key: string | null, bytes: string
+      }>(
+        `SELECT a.uploaded, u.e2e_enabled, a.client_key, a.bytes
            FROM attachments a JOIN users u ON u.id = a.user_id
           WHERE a.id = $1 AND a.user_id = $2
           FOR UPDATE OF a`,
@@ -104,10 +106,15 @@ const attachmentRoutes: FastifyPluginAsync = async (fastify) => {
         await client.query('ROLLBACK')
         return reply.badRequest('Attachments must be end-to-end encrypted for this account')
       }
-      if (rows[0].uploaded) {
+      // Already uploaded: idempotent, unless this is the switch to E2E —
+      // app-sealed bytes replacing a file still in the server's envelope.
+      const replacing = rows[0].uploaded && rows[0].client_key === null && clientKey !== null
+      if (rows[0].uploaded && !replacing) {
         await client.query('ROLLBACK')
         return reply.send({ id, uploaded: true })
       }
+      // A replacement only reserves the difference in size.
+      const reserve = replacing ? body.length - Number(rows[0].bytes) : body.length
 
       // Reserve quota atomically: the UPDATE only matches while the new total
       // still fits, so concurrent uploads can't overshoot.
@@ -118,7 +125,7 @@ const attachmentRoutes: FastifyPluginAsync = async (fastify) => {
         `UPDATE user_storage SET used_bytes = used_bytes + $2
           WHERE user_id = $1 AND used_bytes + $2 <= quota_bytes
         RETURNING used_bytes`,
-        [uid, body.length],
+        [uid, reserve],
       )
       if (!reserved.rowCount) {
         const { rows: s } = await client.query<{ used_bytes: string, quota_bytes: string }>(
