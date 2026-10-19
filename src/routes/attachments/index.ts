@@ -4,6 +4,7 @@
 import { FastifyPluginAsync } from 'fastify'
 import { openBlob, sealBlob, sha256Hex } from '../../lib/blob-crypto'
 import { attachmentKey } from '../../lib/blob-store'
+import { isValidE2e } from '../../lib/e2e'
 
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 export const DEFAULT_QUOTA_BYTES  = 50 * 1024 * 1024
@@ -14,9 +15,10 @@ export const ATTACHMENT_ID_PATTERN = '^att_[a-z0-9]{6,40}$'
 const ID_RE = new RegExp(ATTACHMENT_ID_PATTERN)
 
 interface ContentRow {
-  mime:     string
-  data_key: string | null
-  uploaded: boolean
+  mime:       string
+  data_key:   string | null
+  client_key: string | null
+  uploaded:   boolean
 }
 
 /**
@@ -26,7 +28,14 @@ interface ContentRow {
  * PUT /v1/attachments/:id/content  raw bytes (application/octet-stream),
  *                                  header x-content-sha256; reserves quota,
  *                                  encrypts, writes the object. Idempotent.
- * GET /v1/attachments/:id/content  decrypted bytes; 409 until uploaded.
+ *                                  End-to-end: with header x-wrapped-key (the
+ *                                  app's per-file key, wrapped by the user's
+ *                                  account key) the bytes are already the
+ *                                  app's ciphertext and are stored untouched.
+ *                                  E2E accounts must send it.
+ * GET /v1/attachments/:id/content  decrypted bytes; 409 until uploaded. For
+ *                                  e2e files: the stored ciphertext plus
+ *                                  x-wrapped-key, for the app to open.
  * GET /v1/attachments/usage        { used, quota } for Settings.
  *
  * Every query filters by the caller's Firebase uid and objects live under
@@ -71,17 +80,29 @@ const attachmentRoutes: FastifyPluginAsync = async (fastify) => {
     if (typeof claimed === 'string' && claimed.toLowerCase() !== sha) {
       return reply.badRequest('Checksum mismatch')
     }
+    const wrappedHeader = request.headers['x-wrapped-key']
+    const clientKey = typeof wrappedHeader === 'string' ? wrappedHeader : null
+    if (clientKey !== null && !isValidE2e(clientKey)) {
+      return reply.badRequest('x-wrapped-key is not a valid e2e:v1 value')
+    }
 
     const client = await fastify.pg.connect()
     try {
       await client.query('BEGIN')
-      const { rows } = await client.query<{ uploaded: boolean }>(
-        `SELECT uploaded FROM attachments WHERE id = $1 AND user_id = $2 FOR UPDATE`,
+      const { rows } = await client.query<{ uploaded: boolean, e2e_enabled: boolean }>(
+        `SELECT a.uploaded, u.e2e_enabled
+           FROM attachments a JOIN users u ON u.id = a.user_id
+          WHERE a.id = $1 AND a.user_id = $2
+          FOR UPDATE OF a`,
         [id, uid],
       )
       if (!rows[0]) {
         await client.query('ROLLBACK')
         return reply.notFound('Push the attachment metadata first')
+      }
+      if (rows[0].e2e_enabled && clientKey === null) {
+        await client.query('ROLLBACK')
+        return reply.badRequest('Attachments must be end-to-end encrypted for this account')
       }
       if (rows[0].uploaded) {
         await client.query('ROLLBACK')
@@ -113,13 +134,21 @@ const attachmentRoutes: FastifyPluginAsync = async (fastify) => {
         })
       }
 
-      const { sealed, wrappedKey } = sealBlob(body)
-      await blobs.put(attachmentKey(uid, id), sealed)
+      // App-sealed (e2e) bytes are stored as they are; legacy uploads get the
+      // server's envelope encryption.
+      let dataKey: string | null = null
+      if (clientKey !== null) {
+        await blobs.put(attachmentKey(uid, id), body)
+      } else {
+        const { sealed, wrappedKey } = sealBlob(body)
+        dataKey = wrappedKey
+        await blobs.put(attachmentKey(uid, id), sealed)
+      }
       await client.query(
         `UPDATE attachments
-            SET uploaded = TRUE, data_key = $3, sha256 = $4, bytes = $5
+            SET uploaded = TRUE, data_key = $3, client_key = $6, sha256 = $4, bytes = $5
           WHERE id = $1 AND user_id = $2`,
-        [id, uid, wrappedKey, sha, body.length],
+        [id, uid, dataKey, sha, body.length, clientKey],
       )
       await client.query('COMMIT')
       return reply.code(201).send({ id, uploaded: true })
@@ -141,19 +170,29 @@ const attachmentRoutes: FastifyPluginAsync = async (fastify) => {
     if (!ID_RE.test(id)) return reply.badRequest('Invalid attachment id')
 
     const { rows } = await fastify.pg.query<ContentRow>(
-      `SELECT mime, data_key, uploaded FROM attachments WHERE id = $1 AND user_id = $2`,
+      `SELECT mime, data_key, client_key, uploaded FROM attachments WHERE id = $1 AND user_id = $2`,
       [id, uid],
     )
     const row = rows[0]
     if (!row) return reply.notFound('Attachment not found')
-    if (!row.uploaded || !row.data_key) return reply.conflict('Not uploaded yet')
+    if (!row.uploaded || (!row.data_key && !row.client_key)) {
+      return reply.conflict('Not uploaded yet')
+    }
 
     const sealed = await blobs.get(attachmentKey(uid, id))
     if (!sealed) return reply.notFound('Attachment bytes missing')
+    if (row.client_key) {
+      // End-to-end: hand back the app's ciphertext and its wrapped key.
+      return reply
+        .header('Content-Type', 'application/octet-stream')
+        .header('Cache-Control', 'private, no-store')
+        .header('x-wrapped-key', row.client_key)
+        .send(sealed)
+    }
     return reply
       .header('Content-Type', row.mime)
       .header('Cache-Control', 'private, no-store')
-      .send(openBlob(sealed, row.data_key))
+      .send(openBlob(sealed, row.data_key!))
   })
 }
 

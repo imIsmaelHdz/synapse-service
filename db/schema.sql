@@ -135,6 +135,7 @@ CREATE TABLE IF NOT EXISTS attachments (
   height      INT,
   sha256      TEXT,                                  -- set on upload
   data_key    TEXT,                                  -- wrapped per-file key
+  client_key  TEXT,                                  -- app-wrapped key (e2e); bytes are app ciphertext
   uploaded    BOOLEAN     NOT NULL DEFAULT FALSE,
   created_at  TIMESTAMPTZ NOT NULL,
   updated_at  TIMESTAMPTZ NOT NULL

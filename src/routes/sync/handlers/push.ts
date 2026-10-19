@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Ismael Hernandez
 
 import { FastifyInstance } from 'fastify'
-import { encrypt } from '../../../lib/crypto'
 import { checkProtectedFields, sealAtRest } from '../../../lib/e2e'
 import { deleteAttachments } from '../../../lib/attachments'
 import { ATTACHMENT_ID_PATTERN, MAX_ATTACHMENT_BYTES } from '../../attachments'
@@ -99,7 +98,7 @@ export function registerPushRoute (fastify: FastifyInstance) {
                 id:        { type: 'string', pattern: ATTACHMENT_ID_PATTERN },
                 noteId:    { type: 'string', maxLength: 100 },
                 kind:      { type: 'string', enum: ['image', 'document'] },
-                fileName:  { type: 'string', maxLength: 500 },
+                fileName:  { type: 'string', maxLength: 2000 },  // sealed size; plaintext cap in lib/e2e
                 ext:       { type: 'string', maxLength: 16 },
                 mime:      { type: 'string', maxLength: 200 },
                 bytes:     { type: 'integer', minimum: 0, maximum: MAX_ATTACHMENT_BYTES },
@@ -242,7 +241,7 @@ export function registerPushRoute (fastify: FastifyInstance) {
       // Bytes travel separately (PUT /v1/attachments/:id/content); an upsert
       // never touches uploaded / data_key / sha256.
       for (const a of attachments) {
-        const fileName = encrypt(a.fileName)
+        const fileName = sealAtRest(a.fileName)
         const { rowCount } = await client.query(
           `INSERT INTO attachments (id, user_id, note_id, kind, file_name, ext, mime, bytes, width, height, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, to_timestamp($11 / 1000.0), to_timestamp($12 / 1000.0))

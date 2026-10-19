@@ -30,6 +30,11 @@ export function sealAtRest (value: string): string {
   return isE2e(value) ? value : encrypt(value)
 }
 
+/** A well-formed e2e:v1 value (e.g. an app-wrapped file key). */
+export function isValidE2e (value: unknown): value is string {
+  return typeof value === 'string' && E2E_RE.test(value)
+}
+
 /** Opposite of sealAtRest: e2e values pass through untouched. */
 export function openAtRest (value: string): string {
   return isE2e(value) ? value : decrypt(value)
@@ -46,6 +51,7 @@ const PLAINTEXT_MAX = {
   'note.body':     50000,
   'note.topic':    200,
   'link.reason':   2000,
+  'attachment.fileName': 500,
 } as const
 
 type Field = keyof typeof PLAINTEXT_MAX
@@ -59,6 +65,7 @@ function protectedFields (body: PushBody): Array<[Field, string, unknown]> {
     out.push(['note.title', n.id, n.title], ['note.body', n.id, n.body], ['note.topic', n.id, n.topic])
   }
   for (const l of body.links) out.push(['link.reason', l.id, l.reason])
+  for (const a of body.attachments ?? []) out.push(['attachment.fileName', a.id, a.fileName])
   return out
 }
 

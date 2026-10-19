@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Ismael Hernandez
 
 import { FastifyInstance } from 'fastify'
-import { decrypt } from '../../../lib/crypto'
 import { openAtRest } from '../../../lib/e2e'
 import type { AttachmentRow, BookRow, LinkRow, NoteRow, SnapshotRow } from '../types'
 
@@ -47,7 +46,7 @@ export function registerPullRoute (fastify: FastifyInstance) {
           }
         }
         if (r.op === 'upsert' && r.entity_type === 'attachment' && payload) {
-          payload = { ...payload, fileName: decrypt(payload.fileName as string) }
+          payload = { ...payload, fileName: openAtRest(payload.fileName as string) }
         }
         return {
           seq:        Number(r.seq),
@@ -156,7 +155,7 @@ export function registerPullRoute (fastify: FastifyInstance) {
           id: r.id,
           noteId: r.note_id,
           kind: r.kind,
-          fileName: decrypt(r.file_name),
+          fileName: openAtRest(r.file_name),
           ext: r.ext,
           mime: r.mime,
           bytes: Number(r.bytes),
