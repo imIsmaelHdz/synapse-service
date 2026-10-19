@@ -1,0 +1,101 @@
+{
+  "comment": "Sealed by the Synapse app codec (test/e2e_sync_codec_test.dart) with a fixed TEST-ONLY account key. Regenerate with E2E_FIXTURE_OUT.",
+  "accountKeyHex": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc",
+  "marker": "PLAINTEXT-MARKER",
+  "plaintext": {
+    "books": [
+      {
+        "id": "book-e2e-1",
+        "title": "Meetings PLAINTEXT-MARKER",
+        "author": "Me PLAINTEXT-MARKER",
+        "colorIndex": 2,
+        "type": "notebook",
+        "coverUrl": "https://covers.example/PLAINTEXT-MARKER.jpg",
+        "createdAt": 1700000000000,
+        "updatedAt": 1700000000000
+      }
+    ],
+    "notes": [
+      {
+        "id": "note-e2e-1",
+        "title": "Board review PLAINTEXT-MARKER",
+        "body": "Ñandú 🦝 budget PLAINTEXT-MARKER",
+        "bookId": "book-e2e-1",
+        "topic": "finance PLAINTEXT-MARKER",
+        "createdAt": 1700000000000,
+        "updatedAt": 1700000000000
+      },
+      {
+        "id": "note-e2e-2",
+        "title": "Empty topic PLAINTEXT-MARKER",
+        "body": "",
+        "bookId": "book-e2e-1",
+        "topic": "",
+        "createdAt": 1700000000000,
+        "updatedAt": 1700000000000
+      }
+    ],
+    "links": [
+      {
+        "id": "link-e2e-1",
+        "sourceId": "note-e2e-1",
+        "targetId": "note-e2e-2",
+        "isManual": true,
+        "reason": "Same budget PLAINTEXT-MARKER",
+        "createdAt": 1700000000000,
+        "updatedAt": 1700000000000
+      }
+    ],
+    "deletedBookIds": [],
+    "deletedNoteIds": [],
+    "deletedLinkIds": []
+  },
+  "push": {
+    "books": [
+      {
+        "id": "book-e2e-1",
+        "title": "e2e:v1:Pxvr0tcUaJVCdYtadXEQXCKw1IMh+qKEjVAFcYP+/BImxExri1Rp0b6Vm8fnBsDJ9VWvWiM=",
+        "author": "e2e:v1:mqW/2sQGQvSYVXPhJQzfDGdJ3H8qsWzF2M9sKFBXs4mfEy2eeLf41pkLsjzcTHM=",
+        "colorIndex": 2,
+        "type": "notebook",
+        "coverUrl": "e2e:v1:C5XB9QFyXHSyQmJoAWp2oRjd9TSg4Y0nd1T1ciT64+YeKtxPdgWbjM0hjgyDUO/vD8gSOW6UZSSnCmChGUNMSolyAdL4F0w=",
+        "createdAt": 1700000000000,
+        "updatedAt": 1700000000000
+      }
+    ],
+    "notes": [
+      {
+        "id": "note-e2e-1",
+        "title": "e2e:v1:C7/57VGJEx/AVba8XGmM6mYhPjeADxGPNwl6CGIRfvOQAKg1O501w9Gc+RCLT1uUSO9WWEVPq6on",
+        "body": "e2e:v1:ENDER9WNzBXzj3SybSFmUj1LTrEnRuvsq099QWEQj3yzSA7R3uTiS6uzOz3RJ7zbQHn/jq0aZzvCAVhAjDsQtw==",
+        "bookId": "book-e2e-1",
+        "topic": "e2e:v1:6Esb6PDsirbW2EAiWZG+pO64QRDDioGQKGGCXbsfbbed4BurDqdlyCTNjfjbYFLChiq4JA==",
+        "createdAt": 1700000000000,
+        "updatedAt": 1700000000000
+      },
+      {
+        "id": "note-e2e-2",
+        "title": "e2e:v1:eRnqI6txr5rnGTJtHnewLDLxWAiQNFuAh2gjui+LO96fsMtazTIuIUGzOllQBcV3FW/tgaawzAI=",
+        "body": "e2e:v1:Q1hbB1X0od1G5piZTe+UQJBQFFkPcsO5KwXe8Q==",
+        "bookId": "book-e2e-1",
+        "topic": "e2e:v1:gfv/+BjlKLgPR65rLHk7fJLgWxiSPjqTFWbEhg==",
+        "createdAt": 1700000000000,
+        "updatedAt": 1700000000000
+      }
+    ],
+    "links": [
+      {
+        "id": "link-e2e-1",
+        "sourceId": "note-e2e-1",
+        "targetId": "note-e2e-2",
+        "isManual": true,
+        "reason": "e2e:v1:C+vf8bN4dC9gaOB7kY7zv90FtWeCsLS4S3Kl69dMeiELQhEdMUbEHRT9JbCXdKFF5E/jHbQsq4g=",
+        "createdAt": 1700000000000,
+        "updatedAt": 1700000000000
+      }
+    ],
+    "deletedBookIds": [],
+    "deletedNoteIds": [],
+    "deletedLinkIds": []
+  }
+}

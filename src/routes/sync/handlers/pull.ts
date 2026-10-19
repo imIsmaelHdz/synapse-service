@@ -3,6 +3,7 @@
 
 import { FastifyInstance } from 'fastify'
 import { decrypt } from '../../../lib/crypto'
+import { openAtRest } from '../../../lib/e2e'
 import type { AttachmentRow, BookRow, LinkRow, NoteRow, SnapshotRow } from '../types'
 
 interface SyncEventRow {
@@ -40,9 +41,9 @@ export function registerPullRoute (fastify: FastifyInstance) {
         if (r.op === 'upsert' && r.entity_type === 'note' && payload) {
           payload = {
             ...payload,
-            title: decrypt(payload.title as string),
-            body:  decrypt(payload.body  as string),
-            topic: decrypt(payload.topic as string),
+            title: openAtRest(payload.title as string),
+            body:  openAtRest(payload.body  as string),
+            topic: openAtRest(payload.topic as string),
           }
         }
         if (r.op === 'upsert' && r.entity_type === 'attachment' && payload) {
@@ -135,10 +136,10 @@ export function registerPullRoute (fastify: FastifyInstance) {
         })),
         notes: noteRows.map(r => ({
           id: r.id,
-          title: decrypt(r.title),
-          body: decrypt(r.body),
+          title: openAtRest(r.title),
+          body: openAtRest(r.body),
           bookId: r.book_id ?? '',
-          topic: decrypt(r.topic),
+          topic: openAtRest(r.topic),
           createdAt: Number(r.created_at),
           updatedAt: Number(r.updated_at),
         })),

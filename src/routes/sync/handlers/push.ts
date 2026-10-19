@@ -3,6 +3,7 @@
 
 import { FastifyInstance } from 'fastify'
 import { encrypt } from '../../../lib/crypto'
+import { checkProtectedFields, sealAtRest } from '../../../lib/e2e'
 import { deleteAttachments } from '../../../lib/attachments'
 import { ATTACHMENT_ID_PATTERN, MAX_ATTACHMENT_BYTES } from '../../attachments'
 import type { PushBody } from '../types'
@@ -40,11 +41,11 @@ export function registerPushRoute (fastify: FastifyInstance) {
               additionalProperties: false,
               properties: {
                 id:         { type: 'string', maxLength: 100 },
-                title:      { type: 'string', maxLength: 500 },
-                author:     { type: 'string', maxLength: 500 },
+                title:      { type: 'string', maxLength: 4000 },   // sealed size; plaintext caps in lib/e2e
+                author:     { type: 'string', maxLength: 4000 },
                 colorIndex: { type: 'integer', minimum: 0, maximum: 11 },
                 type:       { type: 'string', maxLength: 50 },
-                coverUrl:   { type: 'string', maxLength: 2000 },
+                coverUrl:   { type: 'string', maxLength: 4000 },
                 coverColor: { type: 'integer' },
                 createdAt:  { type: 'number' },
                 updatedAt:  { type: 'number' },
@@ -60,10 +61,10 @@ export function registerPushRoute (fastify: FastifyInstance) {
               additionalProperties: false,
               properties: {
                 id:        { type: 'string', maxLength: 100 },
-                title:     { type: 'string', maxLength: 500 },
-                body:      { type: 'string', maxLength: 50000 },
+                title:     { type: 'string', maxLength: 4000 },
+                body:      { type: 'string', maxLength: 70000 },
                 bookId:    { type: 'string', maxLength: 100 },
-                topic:     { type: 'string', maxLength: 200 },
+                topic:     { type: 'string', maxLength: 1000 },
                 createdAt: { type: 'number' },
                 updatedAt: { type: 'number' },
               },
@@ -81,7 +82,7 @@ export function registerPushRoute (fastify: FastifyInstance) {
                 sourceId:  { type: 'string', maxLength: 100 },
                 targetId:  { type: 'string', maxLength: 100 },
                 isManual:  { type: 'boolean' },
-                reason:    { type: 'string', maxLength: 2000 },
+                reason:    { type: 'string', maxLength: 4000 },
                 createdAt: { type: 'number' },
                 updatedAt: { type: 'number' },
               },
@@ -127,6 +128,13 @@ export function registerPushRoute (fastify: FastifyInstance) {
     const deletedAttachmentIds = request.body.deletedAttachmentIds ?? []
     let orphanedKeys: string[] = []
 
+    // End-to-end encrypted accounts may only send sealed text (lib/e2e.ts).
+    const { rows: userRows } = await fastify.pg.query<{ e2e_enabled: boolean }>(
+      `SELECT e2e_enabled FROM users WHERE id = $1`, [uid],
+    )
+    const invalid = checkProtectedFields(request.body, userRows[0]?.e2e_enabled ?? false)
+    if (invalid) return reply.badRequest(invalid)
+
     const client = await fastify.pg.connect()
     try {
       await client.query('BEGIN')
@@ -161,7 +169,9 @@ export function registerPushRoute (fastify: FastifyInstance) {
         }
       }
 
-      // ── 2. Notes — upsert with last-write-wins (title/body/topic encrypted)
+      // ── 2. Notes — upsert with last-write-wins. title/body/topic arrive
+      // sealed by the device (e2e:v1, stored as-is) or as legacy plaintext,
+      // which the server seals at rest.
       for (const n of notes) {
         const { rowCount } = await client.query(
           `INSERT INTO notes (id, user_id, title, body, book_id, topic, created_at, updated_at)
@@ -176,10 +186,10 @@ export function registerPushRoute (fastify: FastifyInstance) {
             RETURNING id`,
           [
             n.id, uid,
-            encrypt(n.title),
-            encrypt(n.body ?? ''),
+            sealAtRest(n.title),
+            sealAtRest(n.body ?? ''),
             n.bookId || null,
-            encrypt(n.topic ?? ''),
+            sealAtRest(n.topic ?? ''),
             n.createdAt, n.updatedAt,
           ],
         )
@@ -189,9 +199,9 @@ export function registerPushRoute (fastify: FastifyInstance) {
              VALUES ($1, 'note', $2, 'upsert', $3)`,
             [uid, n.id, JSON.stringify({
               ...n,
-              title: encrypt(n.title),
-              body:  encrypt(n.body ?? ''),
-              topic: encrypt(n.topic ?? ''),
+              title: sealAtRest(n.title),
+              body:  sealAtRest(n.body ?? ''),
+              topic: sealAtRest(n.topic ?? ''),
             })],
           )
         }
