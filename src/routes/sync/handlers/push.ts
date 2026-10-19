@@ -3,6 +3,8 @@
 
 import { FastifyInstance } from 'fastify'
 import { encrypt } from '../../../lib/crypto'
+import { deleteAttachments } from '../../../lib/attachments'
+import { ATTACHMENT_ID_PATTERN, MAX_ATTACHMENT_BYTES } from '../../attachments'
 import type { PushBody } from '../types'
 
 export function registerPushRoute (fastify: FastifyInstance) {
@@ -42,6 +44,8 @@ export function registerPushRoute (fastify: FastifyInstance) {
                 author:     { type: 'string', maxLength: 500 },
                 colorIndex: { type: 'integer', minimum: 0, maximum: 11 },
                 type:       { type: 'string', maxLength: 50 },
+                coverUrl:   { type: 'string', maxLength: 2000 },
+                coverColor: { type: 'integer' },
                 createdAt:  { type: 'number' },
                 updatedAt:  { type: 'number' },
               },
@@ -83,10 +87,33 @@ export function registerPushRoute (fastify: FastifyInstance) {
               },
             },
           },
+          attachments: {
+            type: 'array',
+            maxItems: 5000,
+            items: {
+              type: 'object',
+              required: ['id', 'noteId', 'kind', 'fileName', 'ext', 'mime', 'bytes', 'createdAt', 'updatedAt'],
+              additionalProperties: false,
+              properties: {
+                id:        { type: 'string', pattern: ATTACHMENT_ID_PATTERN },
+                noteId:    { type: 'string', maxLength: 100 },
+                kind:      { type: 'string', enum: ['image', 'document'] },
+                fileName:  { type: 'string', maxLength: 500 },
+                ext:       { type: 'string', maxLength: 16 },
+                mime:      { type: 'string', maxLength: 200 },
+                bytes:     { type: 'integer', minimum: 0, maximum: MAX_ATTACHMENT_BYTES },
+                width:     { type: 'integer', minimum: 0 },
+                height:    { type: 'integer', minimum: 0 },
+                createdAt: { type: 'number' },
+                updatedAt: { type: 'number' },
+              },
+            },
+          },
           exported_at:    { type: 'string', maxLength: 50 },
           deletedBookIds: { type: 'array', maxItems: 5000, items: { type: 'string', maxLength: 100 } },
           deletedNoteIds: { type: 'array', maxItems: 5000, items: { type: 'string', maxLength: 100 } },
           deletedLinkIds: { type: 'array', maxItems: 10000, items: { type: 'string', maxLength: 100 } },
+          deletedAttachmentIds: { type: 'array', maxItems: 5000, items: { type: 'string', maxLength: 100 } },
         },
       },
     },
@@ -96,6 +123,9 @@ export function registerPushRoute (fastify: FastifyInstance) {
     const deletedBookIds = request.body.deletedBookIds ?? []
     const deletedNoteIds = request.body.deletedNoteIds ?? []
     const deletedLinkIds = request.body.deletedLinkIds ?? []
+    const attachments = request.body.attachments ?? []
+    const deletedAttachmentIds = request.body.deletedAttachmentIds ?? []
+    let orphanedKeys: string[] = []
 
     const client = await fastify.pg.connect()
     try {
@@ -106,17 +136,20 @@ export function registerPushRoute (fastify: FastifyInstance) {
       for (const b of books) {
         const updatedAt = b.updatedAt ?? b.createdAt
         const { rowCount } = await client.query(
-          `INSERT INTO books (id, user_id, title, author, color_index, type, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0), to_timestamp($8 / 1000.0))
+          `INSERT INTO books (id, user_id, title, author, color_index, type, cover_url, cover_color, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $9, $10, to_timestamp($7 / 1000.0), to_timestamp($8 / 1000.0))
             ON CONFLICT (id) DO UPDATE SET
             title       = EXCLUDED.title,
             author      = EXCLUDED.author,
             color_index = EXCLUDED.color_index,
             type        = EXCLUDED.type,
+            cover_url   = EXCLUDED.cover_url,
+            cover_color = EXCLUDED.cover_color,
             updated_at  = EXCLUDED.updated_at
             WHERE books.updated_at < EXCLUDED.updated_at
             RETURNING id`,
-          [b.id, uid, b.title, b.author ?? '', b.colorIndex ?? 0, b.type ?? 'book', b.createdAt, updatedAt],
+          [b.id, uid, b.title, b.author ?? '', b.colorIndex ?? 0, b.type ?? 'book', b.createdAt, updatedAt,
+            b.coverUrl ?? null, b.coverColor ?? null],
         )
         // Only log a sync_event when the write actually landed (newer than stored).
         if (rowCount && rowCount > 0) {
@@ -195,7 +228,40 @@ export function registerPushRoute (fastify: FastifyInstance) {
         }
       }
 
+      // ── 3b. Attachment metadata — last-write-wins, file name encrypted.
+      // Bytes travel separately (PUT /v1/attachments/:id/content); an upsert
+      // never touches uploaded / data_key / sha256.
+      for (const a of attachments) {
+        const fileName = encrypt(a.fileName)
+        const { rowCount } = await client.query(
+          `INSERT INTO attachments (id, user_id, note_id, kind, file_name, ext, mime, bytes, width, height, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, to_timestamp($11 / 1000.0), to_timestamp($12 / 1000.0))
+            ON CONFLICT (id) DO UPDATE SET
+            note_id    = EXCLUDED.note_id,
+            file_name  = EXCLUDED.file_name,
+            width      = EXCLUDED.width,
+            height     = EXCLUDED.height,
+            updated_at = EXCLUDED.updated_at
+            WHERE attachments.user_id = EXCLUDED.user_id
+              AND attachments.updated_at < EXCLUDED.updated_at
+            RETURNING id`,
+          [a.id, uid, a.noteId, a.kind, fileName, a.ext, a.mime, a.bytes,
+            a.width ?? null, a.height ?? null, a.createdAt, a.updatedAt],
+        )
+        if (rowCount && rowCount > 0) {
+          await client.query(
+            `INSERT INTO sync_events (uid, entity_type, entity_id, op, payload)
+             VALUES ($1, 'attachment', $2, 'upsert', $3)`,
+            [uid, a.id, JSON.stringify({ ...a, fileName })],
+          )
+        }
+      }
+
       // ── 4. Explicit deletes (tombstones) ────────────────────────────────
+      // Attachments go first: tombstoned ones plus every attachment of a
+      // deleted note, releasing quota. Their objects are removed after COMMIT.
+      orphanedKeys = await deleteAttachments(client, uid, deletedAttachmentIds, deletedNoteIds)
+
       // Delete exactly what the device tombstoned — never inferred from absence.
       // A book delete cascades to its notes; a note delete cascades to its links.
       for (const id of deletedBookIds) {
@@ -241,6 +307,11 @@ export function registerPushRoute (fastify: FastifyInstance) {
       throw err
     } finally {
       client.release()
+    }
+
+    if (orphanedKeys.length > 0 && fastify.blobs) {
+      await fastify.blobs.delete(orphanedKeys).catch(err =>
+        request.log.error({ err, count: orphanedKeys.length }, 'attachment object cleanup failed'))
     }
 
     // Return the highest seq so clients can store it as their cursor

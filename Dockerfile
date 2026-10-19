@@ -17,6 +17,8 @@ RUN addgroup -S synapse && adduser -S synapse -G synapse
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY --from=builder /app/dist ./dist
+# Idempotent SQL applied by the pre-deploy step (node dist/migrate.js)
+COPY db/migrations ./db/migrations
 
 # Hand ownership to the non-root user before switching
 RUN chown -R synapse:synapse /app

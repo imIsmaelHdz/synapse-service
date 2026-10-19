@@ -2,6 +2,8 @@
 builder = "DOCKERFILE"
 
 [deploy]
+# Schema first: a failed migration aborts the deploy and the old code keeps running.
+preDeployCommand        = ["node dist/migrate.js"]
 healthcheckPath         = "/health"
 healthcheckTimeout      = 120
 restartPolicyType       = "ON_FAILURE"

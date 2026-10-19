@@ -9,13 +9,16 @@ import rateLimit   from '@fastify/rate-limit'
 
 import firebasePlugin from './plugins/firebase'
 import postgresPlugin from './plugins/postgres'
+import blobsPlugin    from './plugins/blobs'
+import type { BlobStore } from './lib/blob-store'
 
 import healthRoutes from './routes/health'
 import userRoutes   from './routes/users'
 import syncRoutes   from './routes/sync'
 import aiRoutes     from './routes/ai'
+import attachmentRoutes from './routes/attachments'
 
-export async function buildApp () {
+export async function buildApp (opts: { blobs?: BlobStore | null } = {}) {
   const isProd    = process.env.NODE_ENV === 'production'
   const logLevel  = isProd
     ? 'info'                                        // floor in prod
@@ -69,6 +72,7 @@ export async function buildApp () {
   await app.register(sensible)
   await app.register(postgresPlugin)
   await app.register(firebasePlugin)
+  await app.register(blobsPlugin, { store: opts.blobs })
 
   // Global error handler
   // Logs the real error server-side; returns a sanitised response to the client.
@@ -104,6 +108,7 @@ export async function buildApp () {
   await app.register(userRoutes, { prefix: '/v1/users' })
   await app.register(syncRoutes, { prefix: '/v1/sync'  })
   await app.register(aiRoutes,   { prefix: '/v1/ai'    })
+  await app.register(attachmentRoutes, { prefix: '/v1/attachments' })
 
   return app
 }

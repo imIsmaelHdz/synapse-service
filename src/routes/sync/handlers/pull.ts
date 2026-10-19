@@ -3,7 +3,7 @@
 
 import { FastifyInstance } from 'fastify'
 import { decrypt } from '../../../lib/crypto'
-import type { BookRow, LinkRow, NoteRow, SnapshotRow } from '../types'
+import type { AttachmentRow, BookRow, LinkRow, NoteRow, SnapshotRow } from '../types'
 
 interface SyncEventRow {
   seq:         string   // bigint comes back as string from pg driver
@@ -45,6 +45,9 @@ export function registerPullRoute (fastify: FastifyInstance) {
             topic: decrypt(payload.topic as string),
           }
         }
+        if (r.op === 'upsert' && r.entity_type === 'attachment' && payload) {
+          payload = { ...payload, fileName: decrypt(payload.fileName as string) }
+        }
         return {
           seq:        Number(r.seq),
           entityType: r.entity_type,
@@ -62,7 +65,7 @@ export function registerPullRoute (fastify: FastifyInstance) {
 
     // Check if this user has data in the normalized tables
     const { rows: bookRows } = await fastify.pg.query<BookRow>(
-      `SELECT id, title, author, color_index, type,
+      `SELECT id, title, author, color_index, type, cover_url, cover_color,
               round(extract(epoch from created_at) * 1000)::bigint AS created_at,
               round(extract(epoch from updated_at) * 1000)::bigint AS updated_at
         FROM   books
@@ -107,6 +110,15 @@ export function registerPullRoute (fastify: FastifyInstance) {
       [uid],
     )
 
+    const { rows: attachmentRows } = await fastify.pg.query<AttachmentRow>(
+      `SELECT id, note_id, kind, file_name, ext, mime, bytes, width, height, uploaded,
+              round(extract(epoch from created_at) * 1000)::bigint AS created_at,
+              round(extract(epoch from updated_at) * 1000)::bigint AS updated_at
+        FROM   attachments
+        WHERE  user_id = $1`,
+      [uid],
+    )
+
     return {
       saved_at: new Date().toISOString(),
       graph: {
@@ -116,6 +128,8 @@ export function registerPullRoute (fastify: FastifyInstance) {
           author: r.author,
           colorIndex: r.color_index,
           type: r.type,
+          ...(r.cover_url ? { coverUrl: r.cover_url } : {}),
+          ...(r.cover_color != null ? { coverColor: Number(r.cover_color) } : {}),
           createdAt: Number(r.created_at),
           updatedAt: Number(r.updated_at),
         })),
@@ -134,6 +148,19 @@ export function registerPullRoute (fastify: FastifyInstance) {
           targetId: r.target_id,
           isManual: r.is_manual,
           reason:   r.reason ?? undefined,
+          createdAt: Number(r.created_at),
+          updatedAt: Number(r.updated_at),
+        })),
+        attachments: attachmentRows.map(r => ({
+          id: r.id,
+          noteId: r.note_id,
+          kind: r.kind,
+          fileName: decrypt(r.file_name),
+          ext: r.ext,
+          mime: r.mime,
+          bytes: Number(r.bytes),
+          ...(r.width != null ? { width: r.width } : {}),
+          ...(r.height != null ? { height: r.height } : {}),
           createdAt: Number(r.created_at),
           updatedAt: Number(r.updated_at),
         })),
