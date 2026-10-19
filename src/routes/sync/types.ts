@@ -10,8 +10,6 @@ export interface BookPayload {
   createdAt: number   // milliseconds since epoch
   updatedAt?: number  // ms since epoch — drives last-write-wins; older clients omit it
   type: string
-  coverUrl?: string   // cover image URL from the app's cover search
-  coverColor?: number // ARGB colour sampled from the cover
 }
 
 export interface NotePayload {
@@ -34,20 +32,6 @@ export interface LinkPayload {
   updatedAt?: number  // ms since epoch — drives last-write-wins; older clients omit it
 }
 
-export interface AttachmentPayload {
-  id:        string   // att_…
-  noteId:    string
-  kind:      string   // image | document
-  fileName:  string
-  ext:       string
-  mime:      string
-  bytes:     number
-  width?:    number
-  height?:   number
-  createdAt: number
-  updatedAt: number
-}
-
 export interface PushBody {
   books: BookPayload[]
   notes: NotePayload[]
@@ -59,8 +43,6 @@ export interface PushBody {
   deletedBookIds?: string[]
   deletedNoteIds?: string[]
   deletedLinkIds?: string[]
-  attachments?: AttachmentPayload[]
-  deletedAttachmentIds?: string[]
 }
 
 export interface LayoutPoint {
@@ -79,25 +61,8 @@ export interface BookRow {
   author:      string
   color_index: number
   type:        string
-  cover_url:   string | null
-  cover_color: string | null
   created_at:  string  // bigint epoch ms returned as string by pg driver
   updated_at:  string
-}
-
-export interface AttachmentRow {
-  id:         string
-  note_id:    string
-  kind:       string
-  file_name:  string  // AES-256-GCM encrypted
-  ext:        string
-  mime:       string
-  bytes:      string
-  width:      number | null
-  height:     number | null
-  uploaded:   boolean
-  created_at: string
-  updated_at: string
 }
 
 export interface NoteRow {

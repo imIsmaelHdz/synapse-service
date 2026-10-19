@@ -4,7 +4,6 @@
 import { FastifyPluginAsync, FastifyInstance } from 'fastify'
 import admin from 'firebase-admin'
 import { addToWelcomeList, brevoConfigured } from '../lib/brevo'
-import { attachmentKey } from '../lib/blob-store'
 
 // Row type for the users table
 interface UserRow {
@@ -63,14 +62,6 @@ const userRoutes: FastifyPluginAsync = async (fastify) => {
    */
   fastify.delete('/me', async (request, reply) => {
     const { uid } = request.user
-
-    // 0. Attachment bytes live in the bucket, outside the cascade.
-    if (fastify.blobs) {
-      const { rows } = await fastify.pg.query<{ id: string }>(
-        `SELECT id FROM attachments WHERE user_id = $1 AND uploaded`, [uid],
-      )
-      await fastify.blobs.delete(rows.map(r => attachmentKey(uid, r.id)))
-    }
 
     // 1. Delete from Postgres — cascade handles all child data
     await fastify.pg.query(
